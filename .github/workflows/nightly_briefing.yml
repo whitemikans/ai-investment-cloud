@@ -1,0 +1,27 @@
+name: Nightly Briefing
+
+on:
+  schedule:
+    - cron: '0 14 * * *' # UTC 14:00 = JST 23:00
+  workflow_dispatch:
+
+jobs:
+  briefing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Generate and send briefing
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python scripts/generate_daily_briefing.py
+      - name: Notify failure
+        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
+        run: |
+          curl -H "Content-Type: application/json" -d "{\"content\":\"🚨 nightly_briefing.yml failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" "${{ secrets.DISCORD_WEBHOOK_URL }}"
+

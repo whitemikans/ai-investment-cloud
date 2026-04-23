@@ -1,0 +1,31 @@
+name: Daily News Collect
+
+on:
+  schedule:
+    - cron: '0 22 * * *' # UTC 22:00 = JST 07:00
+  workflow_dispatch:
+
+jobs:
+  run-news-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/run_news_pipeline.py
+      - name: Summary
+        if: always()
+        run: echo "Daily News Collect completed at $(date -u)" >> $GITHUB_STEP_SUMMARY
+      - name: Notify failure
+        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
+        run: |
+          curl -H "Content-Type: application/json" -d "{\"content\":\"🚨 daily_collect.yml failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" "${{ secrets.DISCORD_WEBHOOK_URL }}"
+

@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+
+from ai_analyzer import (
+    analyze_sentiment,
+    build_japanese_summary,
+    extract_related_stocks,
+    infer_sector,
+    score_importance,
+    translate_to_japanese,
+)
+from db.news_utils import get_stock_master_tickers, init_news_tables, list_keyword_alerts
+from rss_reader import fetch_rss_news
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+DB_PATH = PROJECT_ROOT / "investment.db"
+
+KEYWORD_ALIAS_MAP: dict[str, list[str]] = {
+    "自社株買い": ["share buyback", "stock buyback", "share repurchase", "stock repurchase", "buyback"],
+    "業績上方修正": ["raise guidance", "raised guidance", "upward revision", "guidance increase"],
+    "業績下方修正": ["cut guidance", "lowered guidance", "downward revision"],
+    "増配": ["dividend increase", "raised dividend", "dividend hike"],
+    "減配": ["dividend cut", "reduced dividend"],
+    "株式分割": ["stock split", "share split"],
+    "上場廃止": ["delisting", "delisted"],
+    "不祥事": ["scandal", "misconduct", "fraud"],
+    "リストラ": ["restructuring", "layoff", "layoffs"],
+}
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _keyword_variants(keyword: str) -> list[str]:
+    kw = (keyword or "").strip()
+    if not kw:
+        return []
+    variants: set[str] = {kw.lower()}
+
+    # Alias dictionary for finance terms (JP -> EN phrases).
+    for alias in KEYWORD_ALIAS_MAP.get(kw, []):
+        variants.add(alias.lower())
+
+    # Automatic translation fallback for custom keywords.
+    translated = translate_to_japanese(kw)
+    if translated:
+        variants.add(translated.lower())
+    return [v for v in variants if v]
+
+
+def _find_hit_keywords(active_keywords: list[str], searchable_text: str) -> list[str]:
+    hits: list[str] = []
+    for kw in active_keywords:
+        variants = _keyword_variants(kw)
+        if any(v in searchable_text for v in variants):
+            hits.append(kw)
+    return hits
+
+
+def _upsert_article(conn: sqlite3.Connection, article: dict[str, str]) -> int:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = conn.execute("SELECT id FROM news_articles WHERE url = ?", (article["url"],)).fetchone()
+    if row:
+        article_id = int(row["id"])
+        conn.execute(
+            """
+            UPDATE news_articles
+            SET title = ?, source = ?, published_at = ?, summary_ja = ?, content = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                article["title"],
+                article["source"],
+                article["published_at"],
+                article["summary_ja"],
+                article["content"],
+                now,
+                article_id,
+            ),
+        )
+        return article_id
+
+    cur = conn.execute(
+        """
+        INSERT INTO news_articles(title, url, source, published_at, summary_ja, content, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            article["title"],
+            article["url"],
+            article["source"],
+            article["published_at"],
+            article["summary_ja"],
+            article["content"],
+            now,
+            now,
+        ),
+    )
+    return int(cur.lastrowid)
+
+
+def _upsert_sentiment(
+    conn: sqlite3.Connection,
+    article_id: int,
+    sentiment_score: float,
+    sentiment_label: str,
+    importance_score: int,
+    related_stocks: list[str],
+    sector: str,
+) -> None:
+    conn.execute("DELETE FROM news_sentiments WHERE article_id = ?", (article_id,))
+    conn.execute(
+        """
+        INSERT INTO news_sentiments(article_id, sentiment_score, sentiment_label, importance_score, related_stocks, sector, analyzed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            article_id,
+            sentiment_score,
+            sentiment_label,
+            importance_score,
+            ",".join(related_stocks),
+            sector,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+
+
+def _insert_alert(conn: sqlite3.Connection, article_id: int, hit_keywords: list[str], importance_score: int) -> None:
+    if not hit_keywords and importance_score < 4:
+        return
+    alert_type = "keyword" if hit_keywords else "high_importance"
+    message = f"重要ニュースを検知: importance={importance_score}, keywords={','.join(hit_keywords) if hit_keywords else '-'}"
+    conn.execute(
+        """
+        INSERT INTO alerts(article_id, alert_type, message, hit_keywords, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            article_id,
+            alert_type,
+            message,
+            ",".join(hit_keywords),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        ),
+    )
+
+
+def process_news_pipeline(max_articles_per_source: int = 20) -> pd.DataFrame:
+    init_news_tables()
+    stock_codes = get_stock_master_tickers()
+    keywords_df = list_keyword_alerts()
+    active_keywords = keywords_df[keywords_df["is_active"] == 1]["keyword"].astype(str).tolist() if not keywords_df.empty else []
+
+    raw_articles = fetch_rss_news(max_articles_per_source=max_articles_per_source)
+    if not raw_articles:
+        return pd.DataFrame([{"success": False, "message": "ニュースを取得できませんでした。", "processed": 0}])
+
+    processed = 0
+    inserted_or_updated = 0
+    alerts_count = 0
+    with _connect() as conn:
+        for item in raw_articles:
+            text = f"{item['title']} {item['content']}".strip()
+            text_ja_for_match = translate_to_japanese(text)
+            searchable_text = f"{text}\n{text_ja_for_match}".lower()
+            title_ja = translate_to_japanese(item["title"])
+            summary = build_japanese_summary(title_ja, item["content"])
+            sentiment_score, sentiment_label = analyze_sentiment(text)
+            importance = score_importance(text, item["source"])
+            related_stocks = extract_related_stocks(text, stock_codes)
+            sector = infer_sector(text)
+
+            hit_keywords = _find_hit_keywords(active_keywords, searchable_text)
+            if hit_keywords:
+                importance = min(5, importance + 1)
+
+            article_id = _upsert_article(
+                conn,
+                {
+                    "title": title_ja,
+                    "url": item["url"],
+                    "source": item["source"],
+                    "published_at": item["published_at"],
+                    "summary_ja": summary,
+                    "content": item["content"],
+                },
+            )
+            _upsert_sentiment(
+                conn,
+                article_id=article_id,
+                sentiment_score=sentiment_score,
+                sentiment_label=sentiment_label,
+                importance_score=importance,
+                related_stocks=related_stocks,
+                sector=sector,
+            )
+            before = conn.execute("SELECT COUNT(*) AS c FROM alerts").fetchone()["c"]
+            _insert_alert(conn, article_id=article_id, hit_keywords=hit_keywords, importance_score=importance)
+            after = conn.execute("SELECT COUNT(*) AS c FROM alerts").fetchone()["c"]
+            if after > before:
+                alerts_count += 1
+
+            processed += 1
+            inserted_or_updated += 1
+        conn.commit()
+
+    return pd.DataFrame(
+        [
+            {
+                "success": True,
+                "message": "ニュース処理が完了しました。",
+                "processed": processed,
+                "upserted": inserted_or_updated,
+                "alerts": alerts_count,
+            }
+        ]
+    )
+
+
+if __name__ == "__main__":
+    print(process_news_pipeline().to_dict(orient="records")[0])

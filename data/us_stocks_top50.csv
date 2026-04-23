@@ -1,0 +1,51 @@
+﻿stock_code,company_name,sector,market
+AAPL,Apple Inc.,Information Technology,NASDAQ
+MSFT,Microsoft Corporation,Information Technology,NASDAQ
+NVDA,NVIDIA Corporation,Information Technology,NASDAQ
+AMZN,Amazon.com Inc.,Consumer Discretionary,NASDAQ
+GOOGL,Alphabet Inc. Class A,Communication Services,NASDAQ
+META,Meta Platforms Inc.,Communication Services,NASDAQ
+AVGO,Broadcom Inc.,Information Technology,NASDAQ
+TSLA,Tesla Inc.,Consumer Discretionary,NASDAQ
+BRK.B,Berkshire Hathaway Inc. Class B,Financials,NYSE
+LLY,Eli Lilly and Company,Health Care,NYSE
+JPM,JPMorgan Chase & Co.,Financials,NYSE
+V,Visa Inc.,Financials,NYSE
+MA,Mastercard Incorporated,Financials,NYSE
+XOM,Exxon Mobil Corporation,Energy,NYSE
+UNH,UnitedHealth Group Incorporated,Health Care,NYSE
+ORCL,Oracle Corporation,Information Technology,NYSE
+COST,Costco Wholesale Corporation,Consumer Staples,NASDAQ
+JNJ,Johnson & Johnson,Health Care,NYSE
+WMT,Walmart Inc.,Consumer Staples,NYSE
+PG,The Procter & Gamble Company,Consumer Staples,NYSE
+HD,The Home Depot Inc.,Consumer Discretionary,NYSE
+BAC,Bank of America Corporation,Financials,NYSE
+ABBV,AbbVie Inc.,Health Care,NYSE
+CVX,Chevron Corporation,Energy,NYSE
+KO,The Coca-Cola Company,Consumer Staples,NYSE
+MRK,Merck & Co. Inc.,Health Care,NYSE
+CRM,Salesforce Inc.,Information Technology,NYSE
+ADBE,Adobe Inc.,Information Technology,NASDAQ
+NFLX,Netflix Inc.,Communication Services,NASDAQ
+AMD,Advanced Micro Devices Inc.,Information Technology,NASDAQ
+PEP,PepsiCo Inc.,Consumer Staples,NASDAQ
+TMO,Thermo Fisher Scientific Inc.,Health Care,NYSE
+MCD,McDonald's Corporation,Consumer Discretionary,NYSE
+CSCO,Cisco Systems Inc.,Information Technology,NASDAQ
+ACN,Accenture plc,Information Technology,NYSE
+LIN,Linde plc,Materials,NASDAQ
+WFC,Wells Fargo & Company,Financials,NYSE
+DIS,The Walt Disney Company,Communication Services,NYSE
+ABT,Abbott Laboratories,Health Care,NYSE
+TXN,Texas Instruments Incorporated,Information Technology,NASDAQ
+QCOM,QUALCOMM Incorporated,Information Technology,NASDAQ
+INTU,Intuit Inc.,Information Technology,NASDAQ
+INTC,Intel Corporation,Information Technology,NASDAQ
+AMGN,Amgen Inc.,Health Care,NASDAQ
+PFE,Pfizer Inc.,Health Care,NYSE
+GE,GE Aerospace,Industrials,NYSE
+CAT,Caterpillar Inc.,Industrials,NYSE
+IBM,International Business Machines Corporation,Information Technology,NYSE
+GS,The Goldman Sachs Group Inc.,Financials,NYSE
+NOW,ServiceNow Inc.,Information Technology,NYSE

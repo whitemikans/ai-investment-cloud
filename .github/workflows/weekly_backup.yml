@@ -1,0 +1,35 @@
+name: Weekly Backup
+
+on:
+  schedule:
+    - cron: '0 15 * * 0' # UTC 15:00 = JST 月曜0:00
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Export CSV backup
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/backup_to_csv.py
+      - name: Upload backup artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-db-backup
+          path: data/backups/**
+      - name: Notify
+        if: success() && secrets.DISCORD_WEBHOOK_URL != ''
+        run: |
+          curl -H "Content-Type: application/json" -d "{\"content\":\"✅ weekly_backup completed\"}" "${{ secrets.DISCORD_WEBHOOK_URL }}"
+      - name: Notify failure
+        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
+        run: |
+          curl -H "Content-Type: application/json" -d "{\"content\":\"🚨 weekly_backup.yml failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" "${{ secrets.DISCORD_WEBHOOK_URL }}"
+

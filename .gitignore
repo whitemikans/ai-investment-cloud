@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+backups/
+data/backups/
+scheduler.log
+dashboard_events.log
+*.db
+
