@@ -61,6 +61,23 @@ def init_ai_team_tables() -> None:
                 """
             )
         )
+        con.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS agent_research_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT,
+                    title TEXT,
+                    summary TEXT,
+                    sentiment TEXT,
+                    impact INTEGER,
+                    source TEXT,
+                    related_tickers TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+        )
 
 
 def save_ai_team_report(report: dict, agent_outputs: dict[str, dict | str]) -> str:
@@ -150,4 +167,3 @@ def get_ai_team_agent_logs(run_id: str) -> pd.DataFrame:
     ORDER BY id ASC
     """
     return pd.read_sql(text(sql), con=engine, params={"run_id": str(run_id)})
-

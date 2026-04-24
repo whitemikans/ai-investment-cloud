@@ -5,12 +5,17 @@ import os
 import time
 from datetime import datetime
 
+import pandas as pd
+from sqlalchemy import text
+
 from agents import create_analyst, create_reporter, create_researcher, create_risk_manager
-from db.ai_team_utils import save_ai_team_report
+from db.ai_team_utils import init_ai_team_tables, save_ai_team_report
+from db.models import engine
 from news_pipeline import process_news_pipeline
 from tasks import create_analysis_task, create_report_task, create_research_task, create_risk_task
 from tools.analysis_tools import fundamental_analysis, technical_analysis
 from tools.notification_tools import send_discord_message
+from tools.research_tools import save_to_database
 from tools.risk_tools import portfolio_risk_check, stress_test
 
 
@@ -78,6 +83,7 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
 def _local_fallback_pipeline() -> dict:
     r = process_news_pipeline(max_articles_per_source=10)
     r_dict = r.iloc[0].to_dict() if not r.empty else {"processed": 0}
+    _auto_save_research_results(limit=50)
 
     sample = ["AAPL", "MSFT", "NVDA"]
     recs = []
@@ -107,6 +113,36 @@ def _local_fallback_pipeline() -> dict:
         },
     )
     return report
+
+
+def _auto_save_research_results(limit: int = 50) -> None:
+    """最新ニュースをagent_research_resultsへ自動保存する。"""
+    init_ai_team_tables()
+    query = text(
+        """
+        SELECT
+          COALESCE(na.published_at, '') AS date,
+          COALESCE(na.title, '') AS title,
+          COALESCE(na.summary_ja, '') AS summary,
+          COALESCE(ns.sentiment_label, 'neutral') AS sentiment,
+          COALESCE(ns.importance_score, 3) AS impact,
+          COALESCE(na.source, '') AS source,
+          COALESCE(ns.related_stocks, '') AS related_tickers
+        FROM news_articles na
+        LEFT JOIN news_sentiments ns ON ns.article_id = na.id
+        ORDER BY na.published_at DESC, na.id DESC
+        LIMIT :limit_n
+        """
+    )
+    try:
+        df = pd.read_sql(query, con=engine, params={"limit_n": int(limit)})
+    except Exception:
+        return
+
+    if df.empty:
+        return
+    df["created_at"] = datetime.now().isoformat(timespec="seconds")
+    save_to_database("agent_research_results", df.to_json(orient="records", force_ascii=False))
 
 
 def run_investment_crew() -> dict:
@@ -149,4 +185,3 @@ def run_investment_crew() -> dict:
 
 if __name__ == "__main__":
     run_investment_crew()
-

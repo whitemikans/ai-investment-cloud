@@ -25,8 +25,17 @@ def _mk_task(description: str, expected_output: str, agent: object, context: lis
 
 def create_research_task(researcher: object):
     return _mk_task(
-        description="日本株/米国株ニュースと主要市場データを収集し、注目トピックを抽出してください。",
-        expected_output="ニュース一覧、注目トピック、主要指数の要約",
+        description=(
+            "今日の日本の金融市場に関する重要ニュースを調査してください。"
+            "以下の観点で情報を整理してください: "
+            "(1)市場全体の動向 "
+            "(2)注目すべき個別銘柄のニュース "
+            "(3)マクロ経済指標の発表 "
+            "(4)海外市場からの影響。"
+            "各ニュースにセンチメント（ポジティブ/ネガティブ/ニュートラル）を付与し、"
+            "投資への影響度（高/中/低）を評価してください。"
+        ),
+        expected_output="JSON形式のニュースリスト（タイトル、要約、センチメント、影響度、関連銘柄）",
         agent=researcher,
     )
 
@@ -34,12 +43,14 @@ def create_research_task(researcher: object):
 def create_analysis_task(analyst: object, research_task: object):
     return _mk_task(
         description=(
-            "リサーチャーが収集したニュースで注目された銘柄について、"
-            "テクニカル分析とファンダメンタルズ分析を実行してください。"
-            "各銘柄について5軸評価スコア（ニュース/テクニカル/バリュエーション/成長性/リスク）を算出し、"
-            "総合推奨度（1〜5）と推奨アクション（買い/保持/売り）を決定してください。"
+            "リサーチャーが収集したニュースを基に、保有銘柄への影響を分析してください。"
+            "各銘柄について"
+            "(1)ニュースの影響評価 "
+            "(2)テクニカル分析の状況 "
+            "(3)投資推奨（買い/保持/売り） "
+            "(4)推奨の根拠を記述してください。"
         ),
-        expected_output="各銘柄の5軸評価スコア、総合推奨度（1〜5）、推奨アクション（買い/保持/売り）",
+        expected_output="各銘柄の投資評価レポート（推奨度1〜5、推奨アクション、根拠）",
         agent=analyst,
         context=[research_task],
     )
