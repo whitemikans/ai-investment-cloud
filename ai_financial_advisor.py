@@ -110,3 +110,62 @@ def generate_financial_advice(data: dict) -> str:
         if "401" in msg or "403" in msg or "API_KEY_INVALID" in msg:
             return "APIキーが無効です（401/403）。GEMINI_API_KEY を再設定してください。"
         return f"AI診断の実行中にエラーが発生しました: {exc}"
+
+
+def generate_whatif_comparison_comment(compare_rows: list[dict]) -> str:
+    """Generate short AI comment for what-if comparison table."""
+    if not compare_rows:
+        return "比較データがないためコメントを生成できません。"
+
+    base_row = next((r for r in compare_rows if r.get("シナリオ") == "ベースケース"), compare_rows[0])
+    base_prob = float(base_row.get("FIRE確率", 0.0))
+    base_assets = float(base_row.get("90歳時資産", 0.0))
+
+    ranked = sorted(compare_rows, key=lambda r: (float(r.get("FIRE確率", 0.0)), float(r.get("90歳時資産", 0.0))), reverse=True)
+    best = ranked[0]
+
+    local_comment = (
+        f"最有力シナリオは「{best.get('シナリオ', '-') }」です。"
+        f"FIRE確率 {float(best.get('FIRE確率', 0.0)) * 100:.1f}%、"
+        f"90歳時資産 ¥{float(best.get('90歳時資産', 0.0)):,.0f}。"
+        f"ベースケース比で確率 {((float(best.get('FIRE確率', 0.0)) - base_prob) * 100):+.1f}pt、"
+        f"資産 {float(best.get('90歳時資産', 0.0) - base_assets):+,.0f} 円です。"
+    )
+
+    api_key = (get_setting("GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")).strip()
+    if not api_key:
+        return local_comment
+
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception:
+        return local_comment
+
+    model_name = (get_setting("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash").strip()
+    system_prompt = (
+        "あなたは日本のFPです。What-If比較表を基に、"
+        "意思決定に使える短いコメントを日本語で3〜5行で出力してください。"
+    )
+    user_prompt = f"""
+以下のWhat-If比較データを分析してコメントしてください。
+
+{json.dumps(compare_rows, ensure_ascii=False, indent=2)}
+
+出力要件:
+- 最も改善効果が高いシナリオ
+- 最も悪化するシナリオ
+- 次に試すべき追加検証を1つ
+- 最後に「投資判断は自己責任」と明記
+"""
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(system_instruction=system_prompt, temperature=0.3),
+        )
+        text = (response.text or "").strip()
+        return text or local_comment
+    except Exception:
+        return local_comment

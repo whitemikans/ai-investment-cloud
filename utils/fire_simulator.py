@@ -35,6 +35,15 @@ def _event_adjustments(age: int, events_df: pd.DataFrame) -> tuple[float, float,
         ev_age = int(row.get("age", age))
         ev_type = str(row.get("event_type", "")).strip()
         amount = float(row.get("amount", 0.0))
+        amount_unit = str(row.get("amount_unit", "円")).strip()
+        frequency = str(row.get("frequency", "年額")).strip()
+        if amount_unit == "万円":
+            amount *= 10_000.0
+        # Backward compatibility: very small amounts are often entered as 万円 by mistake.
+        elif amount_unit == "円" and 0 < abs(amount) <= 10_000:
+            amount *= 10_000.0
+        if frequency == "月額":
+            amount *= 12.0
         duration = int(row.get("duration_years", 1))
         if ev_type == EVENT_TYPE_ONE_TIME_EXPENSE and age == ev_age:
             one_time += max(0.0, amount)
@@ -85,6 +94,8 @@ def simulate_fire_deterministic(
                 "annual_cashflow": annual_cashflow,
                 "annual_return_amount": annual_return_amt,
                 "one_time_expense": one_time,
+                "recurring_expense": recurring_expense,
+                "income_delta": income_delta,
                 "is_fire_phase": is_fire,
             }
         )
@@ -160,9 +171,17 @@ def simulate_fire_monte_carlo(
 
 def build_what_if_scenarios(base_params: dict) -> list[dict]:
     """Return default what-if scenario parameter overrides."""
+    annual_income = float(base_params.get("annual_income", 0))
+    annual_expense = float(base_params.get("annual_expense", 0))
+    annual_investment = max(0.0, annual_income - annual_expense)
+    estimated_assets_if_started_5y_earlier = annual_investment * 5.0 * 1.25
     return [
         {"name": "ベースケース", "overrides": {}},
-        {"name": "年収+100万円", "overrides": {"annual_income": float(base_params.get("annual_income", 0)) + 1_000_000}},
-        {"name": "リターン5%", "overrides": {"annual_return": 0.05}},
-        {"name": "Barista FIRE", "overrides": {"part_time_income_annual": 1_200_000}},
+        {"name": "もし年収が100万円上がったら？", "overrides": {"annual_income": annual_income + 1_000_000}},
+        {"name": "もし5年早く投資を始めていたら？", "overrides": {"current_assets_add": estimated_assets_if_started_5y_earlier}},
+        {"name": "もし子供が2人になったら？", "overrides": {"annual_expense_add": 1_000_000}},
+        {"name": "もし住宅を購入しなかったら？（賃貸継続）", "overrides": {"annual_expense_add": -600_000}},
+        {"name": "もしBarista FIREを選んだら？", "overrides": {"part_time_income_annual": 1_200_000}},
+        {"name": "もしリターンが5%しかなかったら？", "overrides": {"annual_return": 0.05}},
+        {"name": "もし55歳で早期退職制度を使ったら？", "overrides": {"early_retire_at_55": True}},
     ]
