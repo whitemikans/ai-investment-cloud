@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from agents import create_analyst, create_reporter, create_researcher, create_risk_manager
 from db.ai_team_utils import init_ai_team_tables, save_ai_team_report
+from db.db_utils import init_db
 from db.db_utils import get_portfolio_df_with_price
 from db.models import engine
 from llm_config import resolve_gemini_api_key, resolve_model_name
@@ -253,6 +254,8 @@ def run_investment_crew() -> dict:
     print("━" * 50)
 
     try:
+        # Ensure core DB schema (including stocks table) exists before any stage.
+        init_db()
         env_status = _required_env_status()
         print(f"ENV CHECK: {env_status}")
         db_ok = bool(_run_with_retry(_test_db_connection, "DB接続テスト", retries=3, timeout_sec=60))
