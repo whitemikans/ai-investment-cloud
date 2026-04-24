@@ -77,6 +77,7 @@ def render_unified_sidebar_navigation() -> None:
 
         with st.expander("🤖 AI分析", expanded=False):
             st.page_link("pages/20_AI分析.py", label="AI分析")
+            st.page_link("pages/21_AIチーム分析.py", label="AIチーム分析")
 
         with st.expander("🏥 システムヘルスチェック", expanded=False):
             st.page_link("pages/17_管理者ヘルスチェック.py", label="管理者ヘルスチェック")

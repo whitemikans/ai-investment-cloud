@@ -1,0 +1,48 @@
+name: AI Investment Crew - Daily Analysis
+
+on:
+  schedule:
+    - cron: "0 22 * * *" # UTC 22:00 = JST 07:00
+  workflow_dispatch:
+
+jobs:
+  run-crew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run AI Investment Crew
+        run: python run_investment_crew.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crew-log-${{ github.run_number }}
+          path: dashboard_events.log
+          retention-days: 30
+
+      - name: Notify error to Discord
+        if: failure()
+        run: |
+          python - <<'PY'
+          import os, requests
+          url = os.getenv("DISCORD_WEBHOOK_URL","").strip()
+          if url:
+              requests.post(url, json={"content":"🔴 daily_crew.yml が失敗しました。Actionsログを確認してください。"}, timeout=10)
+          PY
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
