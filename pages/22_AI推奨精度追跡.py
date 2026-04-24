@@ -18,10 +18,19 @@ with c1:
     if st.button("最新データで再計算", use_container_width=True, type="primary"):
         with st.spinner("推奨精度を再計算中..."):
             result = track_recommendation_performance(lookback_days=540)
+        st.session_state["ai_perf_recalc_result"] = result
         st.success(f"再計算完了: {result}")
-        st.rerun()
 with c2:
     st.info("GitHub Actions の週次ジョブでも自動更新されます。")
+
+last_result = st.session_state.get("ai_perf_recalc_result")
+if isinstance(last_result, dict):
+    st.caption(
+        "最終再計算結果: "
+        f"tracked={int(last_result.get('tracked', 0))}, "
+        f"buy_recommendations={int(last_result.get('buy_recommendations', 0))}, "
+        f"buy_win_rate_1m={last_result.get('buy_win_rate_1m')}"
+    )
 
 
 df = load_performance_data(limit=5000)
