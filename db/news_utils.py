@@ -153,15 +153,27 @@ def seed_default_keywords() -> None:
 
 
 def get_portfolio_tickers() -> list[str]:
-    with _connect() as conn:
-        rows = conn.execute("SELECT stock_code FROM portfolio ORDER BY stock_code").fetchall()
-    return [str(r["stock_code"]) for r in rows]
+    init_news_tables()
+    try:
+        with _connect() as conn:
+            rows = conn.execute("SELECT stock_code FROM portfolio ORDER BY stock_code").fetchall()
+        return [str(r["stock_code"]) for r in rows]
+    except sqlite3.OperationalError:
+        return []
 
 
 def get_stock_master_tickers() -> list[str]:
-    with _connect() as conn:
-        rows = conn.execute("SELECT stock_code FROM stocks ORDER BY stock_code").fetchall()
-    return [str(r["stock_code"]) for r in rows]
+    init_news_tables()
+    try:
+        with _connect() as conn:
+            rows = conn.execute("SELECT stock_code FROM stocks ORDER BY stock_code").fetchall()
+        codes = [str(r["stock_code"]) for r in rows]
+        if codes:
+            return codes
+    except sqlite3.OperationalError:
+        pass
+    # Hard fallback so researcher stage never fails on missing stock master.
+    return [c for c, _, _, _ in DEFAULT_STOCK_MASTER]
 
 
 def get_news_feed_df(
