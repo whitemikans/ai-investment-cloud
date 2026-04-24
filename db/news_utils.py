@@ -35,6 +35,14 @@ KEYWORD_ALIAS_MAP: dict[str, list[str]] = {
     "リストラ": ["restructuring", "layoff", "layoffs"],
 }
 
+DEFAULT_STOCK_MASTER = [
+    ("AAPL", "Apple", "Information Technology", "NASDAQ"),
+    ("MSFT", "Microsoft", "Information Technology", "NASDAQ"),
+    ("NVDA", "NVIDIA", "Information Technology", "NASDAQ"),
+    ("GOOGL", "Alphabet", "Communication Services", "NASDAQ"),
+    ("AMZN", "Amazon", "Consumer Discretionary", "NASDAQ"),
+]
+
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
@@ -44,6 +52,26 @@ def _connect() -> sqlite3.Connection:
 
 def init_news_tables() -> None:
     with _connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stocks (
+                stock_code TEXT PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                sector TEXT,
+                market TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS portfolio (
+                stock_code TEXT PRIMARY KEY,
+                total_quantity INTEGER DEFAULT 0,
+                avg_price REAL DEFAULT 0,
+                total_cost REAL DEFAULT 0
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS news_articles (
@@ -98,6 +126,14 @@ def init_news_tables() -> None:
             )
             """
         )
+        for code, name, sector, market in DEFAULT_STOCK_MASTER:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO stocks(stock_code, company_name, sector, market)
+                VALUES (?, ?, ?, ?)
+                """,
+                (code, name, sector, market),
+            )
         conn.commit()
 
     seed_default_keywords()
