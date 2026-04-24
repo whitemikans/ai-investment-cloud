@@ -6,7 +6,12 @@ from datetime import date
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from scipy.optimize import minimize
+try:
+    from scipy.optimize import minimize
+    HAS_SCIPY = True
+except Exception:
+    minimize = None
+    HAS_SCIPY = False
 
 
 ANNUAL_TRADING_DAYS = 252
@@ -91,6 +96,12 @@ def _build_result(
     )
 
 
+def _random_weights(n_assets: int, n_samples: int = 12000) -> np.ndarray:
+    w = np.random.random((n_samples, n_assets))
+    w = w / w.sum(axis=1, keepdims=True)
+    return w
+
+
 def _base_constraints(n_assets: int) -> tuple[list[dict], tuple[tuple[float, float], ...], np.ndarray]:
     constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
     bounds = tuple((0.0, 1.0) for _ in range(n_assets))
@@ -114,16 +125,29 @@ def minimize_risk(
     constraints, bounds, x0 = _base_constraints(len(tickers))
     constraints.append({"type": "eq", "fun": lambda w: np.dot(w, mean_vals) - target_return})
 
-    result = minimize(
-        lambda w: np.dot(w.T, np.dot(cov_vals, w)),
-        x0=x0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=constraints,
-    )
-    if not result.success:
-        return None
-    return _build_result(tickers, result.x, mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+    if HAS_SCIPY:
+        result = minimize(
+            lambda w: np.dot(w.T, np.dot(cov_vals, w)),
+            x0=x0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+        )
+        if not result.success:
+            return None
+        return _build_result(tickers, result.x, mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+
+    # Fallback without scipy: random search around target return
+    samples = _random_weights(len(tickers), n_samples=15000)
+    rets = samples @ mean_vals
+    vars_ = np.einsum("ij,jk,ik->i", samples, cov_vals, samples)
+    mask = np.abs(rets - target_return) <= 0.003
+    if not np.any(mask):
+        idx = int(np.argmin(np.abs(rets - target_return)))
+        return _build_result(tickers, samples[idx], mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+    candidate_idx = np.where(mask)[0]
+    idx = int(candidate_idx[np.argmin(vars_[candidate_idx])])
+    return _build_result(tickers, samples[idx], mean_vals, cov_vals, risk_free_rate=risk_free_rate)
 
 
 def find_min_variance_portfolio(
@@ -140,16 +164,22 @@ def find_min_variance_portfolio(
     cov_vals = cov_matrix.loc[tickers, tickers].values
     constraints, bounds, x0 = _base_constraints(len(tickers))
 
-    result = minimize(
-        lambda w: np.dot(w.T, np.dot(cov_vals, w)),
-        x0=x0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=constraints,
-    )
-    if not result.success:
-        return None
-    return _build_result(tickers, result.x, mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+    if HAS_SCIPY:
+        result = minimize(
+            lambda w: np.dot(w.T, np.dot(cov_vals, w)),
+            x0=x0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+        )
+        if not result.success:
+            return None
+        return _build_result(tickers, result.x, mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+
+    samples = _random_weights(len(tickers), n_samples=15000)
+    vars_ = np.einsum("ij,jk,ik->i", samples, cov_vals, samples)
+    idx = int(np.argmin(vars_))
+    return _build_result(tickers, samples[idx], mean_vals, cov_vals, risk_free_rate=risk_free_rate)
 
 
 def find_max_sharpe_portfolio(
@@ -173,16 +203,24 @@ def find_max_sharpe_portfolio(
         ret = _portfolio_return(weights, mean_vals)
         return -((ret - risk_free_rate) / risk)
 
-    result = minimize(
-        neg_sharpe,
-        x0=x0,
-        method="SLSQP",
-        bounds=bounds,
-        constraints=constraints,
-    )
-    if not result.success:
-        return None
-    return _build_result(tickers, result.x, mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+    if HAS_SCIPY:
+        result = minimize(
+            neg_sharpe,
+            x0=x0,
+            method="SLSQP",
+            bounds=bounds,
+            constraints=constraints,
+        )
+        if not result.success:
+            return None
+        return _build_result(tickers, result.x, mean_vals, cov_vals, risk_free_rate=risk_free_rate)
+
+    samples = _random_weights(len(tickers), n_samples=20000)
+    rets = samples @ mean_vals
+    risks = np.sqrt(np.einsum("ij,jk,ik->i", samples, cov_vals, samples))
+    sharpes = np.where(risks > 0, (rets - risk_free_rate) / risks, -1e9)
+    idx = int(np.argmax(sharpes))
+    return _build_result(tickers, samples[idx], mean_vals, cov_vals, risk_free_rate=risk_free_rate)
 
 
 def find_risk_parity_portfolio(
@@ -281,4 +319,3 @@ def interpolate_frontier_by_risk_tolerance(frontier_df: pd.DataFrame, risk_toler
         "sharpe": float(row["sharpe"]),
         "weights": dict(row["weights"]),
     }
-

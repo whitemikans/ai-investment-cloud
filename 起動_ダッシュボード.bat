@@ -1,10 +1,10 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 cd /d "%~dp0"
 
 set "PY_EXE="
-set "PORT=8501"
+set "PORT="
 
 REM Prefer real Python executable under LocalAppData
 for /d %%D in ("%LocalAppData%\Programs\Python\Python*") do (
@@ -38,7 +38,7 @@ if %ERRORLEVEL% neq 0 (
 set "MISS_FILE=%TEMP%\ai_dashboard_missing_modules.txt"
 if exist "%MISS_FILE%" del /q "%MISS_FILE%" >nul 2>nul
 
-%PY_EXE% -c "import importlib.util as u;mods=['streamlit','plotly','yfinance','pandas','numpy','sqlalchemy','feedparser','requests'];miss=[m for m in mods if u.find_spec(m) is None];print(','.join(miss)) if miss else None;raise SystemExit(1 if miss else 0)" > "%MISS_FILE%"
+%PY_EXE% -c "import importlib.util as u;mods=['streamlit','plotly','yfinance','pandas','numpy','sqlalchemy','feedparser','requests','scipy','google.genai'];miss=[m for m in mods if u.find_spec(m) is None];print(','.join(miss)) if miss else None;raise SystemExit(1 if miss else 0)" > "%MISS_FILE%"
 
 if %ERRORLEVEL% neq 0 (
   set /p MISSING=<"%MISS_FILE%"
@@ -53,9 +53,22 @@ if %ERRORLEVEL% neq 0 (
   )
 )
 
-REM If 8501 is already in use, fallback to 8502
-netstat -ano | findstr /r /c:":8501 .*LISTENING" >nul 2>nul
-if %ERRORLEVEL%==0 set "PORT=8502"
+REM Find first free port in 8501-8520
+for /l %%P in (8501,1,8520) do (
+  netstat -ano | findstr /r /c:":%%P .*LISTENING" >nul 2>nul
+  if errorlevel 1 (
+    set "PORT=%%P"
+    goto :port_found
+  )
+)
+
+:port_found
+if not defined PORT (
+  echo No available port in 8501-8520.
+  echo Close existing Streamlit apps and try again.
+  pause
+  exit /b 1
+)
 
 echo Starting dashboard...
 echo URL: http://localhost:%PORT%
