@@ -178,7 +178,12 @@ def _auto_save_research_results(limit: int = 50) -> None:
         LIMIT :limit_n
         """
     )
-    df = pd.read_sql(query, con=engine, params={"limit_n": int(limit)})
+    try:
+        df = pd.read_sql(query, con=engine, params={"limit_n": int(limit)})
+    except Exception:
+        # In PostgreSQL-first environments, news_* tables may not exist yet.
+        # Skip silently so Researcher stage does not fail.
+        return
     if df.empty:
         return
     df["created_at"] = datetime.now().isoformat(timespec="seconds")
