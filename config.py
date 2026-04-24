@@ -86,7 +86,15 @@ def get_database_url() -> str:
             or DEFAULT_SQLITE_URL
         )
     else:
-        raw = get_setting("LOCAL_DATABASE_URL", DEFAULT_SQLITE_URL) or DEFAULT_SQLITE_URL
+        # Priority outside Streamlit Cloud:
+        # 1) LOCAL_DATABASE_URL (explicit local override)
+        # 2) DATABASE_URL (CI/GitHub Actions/remote DB)
+        # 3) local sqlite fallback
+        raw = (
+            get_setting("LOCAL_DATABASE_URL")
+            or get_setting("DATABASE_URL")
+            or DEFAULT_SQLITE_URL
+        )
     # Supabase/Heroku style URL compatibility for SQLAlchemy
     # e.g. postgres://... -> postgresql+psycopg2://...
     if raw.startswith("postgres://"):
