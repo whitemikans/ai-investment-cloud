@@ -20,6 +20,7 @@ from db.db_utils import get_portfolio_df_with_price
 from db.models import engine
 from llm_config import resolve_gemini_api_key, resolve_model_name
 from news_pipeline import process_news_pipeline
+from performance_tracker import summarize_recent_accuracy
 from tasks import create_analysis_task, create_report_task, create_research_task, create_risk_task
 from tools.analysis_tools import fundamental_analysis, technical_analysis
 from tools.notification_tools import send_discord_message
@@ -125,6 +126,14 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
     lines.extend(notable_lines or ["- 該当なし"])
     lines.extend([f"🛡️ リスク: {risk_alerts or '重大警告なし'}", "📊 推奨アクション:"])
     lines.extend([f"- {a}" for a in actions])
+    acc = summarize_recent_accuracy(days=90)
+    acc_rate = acc.get("buy_win_rate_1m")
+    acc_samples = int(acc.get("samples", 0) or 0)
+    if acc_rate is None:
+        lines.append(f"- 過去3ヶ月 買い推奨1ヶ月勝率: N/A (samples={acc_samples})")
+    else:
+        lines.append(f"- 過去3ヶ月 買い推奨1ヶ月勝率: {float(acc_rate):.1f}% (samples={acc_samples})")
+    lines.append("- 自分たちの過去推奨精度を継続監視し、次回提案へ反映します。")
     lines.append("⚠️ 免責事項: 本情報は一般情報であり、投資判断はご自身の責任でお願いします。")
     full = "\n".join(lines)
 
