@@ -7,3 +7,5 @@ sqlalchemy
 feedparser
 requests
 psycopg2-binary
+scipy
+google-genai
