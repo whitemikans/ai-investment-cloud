@@ -15,6 +15,7 @@ from config import get_database_url
 from db.db_utils import get_portfolio_base_df
 from utils.common import apply_global_ui_tweaks, render_footer
 from utils.portfolio_optimizer import (
+    allocate_with_nisa_constraints,
     build_return_stats,
     fetch_price_history,
     find_max_sharpe_portfolio,
@@ -255,7 +256,7 @@ tickers = [t.strip().upper() for t in ticker_text.split(",") if t.strip()]
 
 risk_tolerance = st.sidebar.slider("リスク許容度", min_value=1, max_value=10, value=6)
 rebalance_threshold = st.sidebar.slider("リバランス閾値(%)", min_value=1.0, max_value=10.0, value=5.0, step=0.5) / 100.0
-annual_budget = st.sidebar.number_input("年間投資額（円）", min_value=100000, value=1200000, step=100000)
+annual_budget = st.sidebar.number_input("年間投資予定額（円）", min_value=100000, value=1200000, step=100000)
 risk_free_rate = st.sidebar.number_input("無リスク金利(%)", min_value=0.0, max_value=10.0, value=0.5, step=0.1) / 100.0
 
 run_opt = st.sidebar.button("最適化を実行", use_container_width=True, type="primary")
@@ -337,6 +338,13 @@ sector_sentiment_df, keyword_freq_df, news_env_error = load_news_environment(day
 adjusted_weights, adjustment_notes = build_market_adjusted_weights(selected["weights"], market_env, sector_sentiment_df)
 selected_stats = _portfolio_stats(selected["weights"], tickers, mean_returns, cov_matrix, payload["risk_free_rate"])
 adjusted_stats = _portfolio_stats(adjusted_weights, tickers, mean_returns, cov_matrix, payload["risk_free_rate"])
+nisa_result = allocate_with_nisa_constraints(
+    base_weights=selected["weights"],
+    mean_returns=mean_returns,
+    annual_investment=float(annual_budget),
+    years=10,
+    tax_rate=0.20,
+)
 
 tabs = st.tabs(["📊 効率的フロンティア", "⚖️ 最適配分", "🔄 リバランス", "🤖 AI診断", "📈 ブラック・リッターマン"])
 
@@ -376,6 +384,42 @@ with tabs[1]:
     c6.metric("市場調整後 シャープ", f"{adjusted_stats['sharpe']:.2f}", delta=f"{adjusted_stats['sharpe'] - selected_stats['sharpe']:+.2f}")
 
     st.dataframe(compare_df.style.format({c: "{:.2%}" for c in compare_df.columns if c != "Ticker"}), use_container_width=True)
+
+    st.markdown("#### 新NISA制約を反映した口座配分（年間投資予定額ベース）")
+    st.caption("つみたて対象: VOO / 1655 / 1343、成長投資枠: 個別株+ETF（2510 / 1540は対象外）")
+    cap1, cap2, cap3 = st.columns(3)
+    cap1.metric("つみたて投資枠 使用額", f"¥{nisa_result.tsumitate_used:,.0f}")
+    cap2.metric("成長投資枠 使用額", f"¥{nisa_result.growth_used:,.0f}")
+    cap3.metric("特定口座 配分額", f"¥{nisa_result.taxable_used:,.0f}")
+
+    ben1, ben2 = st.columns(2)
+    ben1.metric("年間 非課税メリット概算", f"¥{nisa_result.annual_tax_benefit:,.0f}")
+    ben2.metric("10年間 累計メリット概算", f"¥{nisa_result.ten_year_tax_benefit:,.0f}")
+    st.caption("非課税メリットは『NISA配分額 x 期待リターン x 20%』の概算です。")
+
+    nisa_view = nisa_result.allocation_df.rename(
+        columns={
+            "Ticker": "銘柄",
+            "Expected Return": "期待リターン",
+            "Planned Amount": "年間投資予定",
+            "NISA Tsumitate": "NISA(つみたて)",
+            "NISA Growth": "NISA(成長)",
+            "Taxable": "特定口座",
+        }
+    )
+    st.dataframe(
+        nisa_view.style.format(
+            {
+                "期待リターン": "{:.2%}",
+                "年間投資予定": "¥{:,.0f}",
+                "NISA(つみたて)": "¥{:,.0f}",
+                "NISA(成長)": "¥{:,.0f}",
+                "特定口座": "¥{:,.0f}",
+            }
+        ),
+        use_container_width=True,
+        height=360,
+    )
 
 with tabs[2]:
     rows = []

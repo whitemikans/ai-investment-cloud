@@ -15,6 +15,41 @@ except Exception:
 
 
 ANNUAL_TRADING_DAYS = 252
+NISA_TSUMITATE_LIMIT = 1_200_000
+NISA_GROWTH_LIMIT = 2_400_000
+NISA_TAX_RATE = 0.20
+
+TSUMITATE_ELIGIBLE = {"VOO", "1655", "1343"}
+NISA_EXCLUDED = {"2510", "1540"}
+KNOWN_ETFS = {
+    "VOO",
+    "1655",
+    "2510",
+    "1343",
+    "1540",
+    "QQQ",
+    "SPY",
+    "VTI",
+    "VT",
+    "AGG",
+    "BND",
+    "GLD",
+    "IAU",
+    "VNQ",
+    "IYR",
+    "XLF",
+    "XLK",
+    "XLE",
+    "XLY",
+    "XLP",
+    "XLV",
+    "XLU",
+    "XLI",
+    "XLB",
+    "XLC",
+    "DIA",
+    "IWM",
+}
 
 
 @dataclass
@@ -23,6 +58,123 @@ class OptimizationResult:
     expected_return: float
     risk: float
     sharpe: float
+
+
+@dataclass
+class NisaAllocationResult:
+    allocation_df: pd.DataFrame
+    annual_tax_benefit: float
+    ten_year_tax_benefit: float
+    tsumitate_used: float
+    growth_used: float
+    taxable_used: float
+
+
+def _is_etf_ticker(ticker: str) -> bool:
+    clean = str(ticker).strip().upper()
+    if not clean:
+        return False
+    if clean in KNOWN_ETFS:
+        return True
+    return clean.isdigit() and len(clean) == 4
+
+
+def allocate_with_nisa_constraints(
+    base_weights: dict[str, float],
+    mean_returns: pd.Series,
+    annual_investment: float,
+    years: int = 10,
+    tax_rate: float = NISA_TAX_RATE,
+) -> NisaAllocationResult:
+    """Allocate annual investment into tsumitate/growth/taxable buckets under 新NISA constraints."""
+    if annual_investment <= 0 or not base_weights:
+        empty_df = pd.DataFrame(
+            columns=[
+                "Ticker",
+                "Expected Return",
+                "Planned Amount",
+                "NISA Tsumitate",
+                "NISA Growth",
+                "Taxable",
+            ]
+        )
+        return NisaAllocationResult(empty_df, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    tickers = [str(t).strip().upper() for t in base_weights.keys()]
+    weights = pd.Series({t: max(0.0, float(base_weights.get(t, 0.0))) for t in tickers}, dtype=float)
+    weight_sum = float(weights.sum())
+    if weight_sum <= 0:
+        weights = pd.Series({t: 1.0 / len(tickers) for t in tickers}, dtype=float)
+    else:
+        weights = weights / weight_sum
+
+    expected = pd.Series(index=tickers, dtype=float)
+    for ticker in tickers:
+        expected.loc[ticker] = float(mean_returns.get(ticker, 0.0))
+
+    planned = weights * float(annual_investment)
+    df = pd.DataFrame(
+        {
+            "Ticker": tickers,
+            "Expected Return": expected.values,
+            "Planned Amount": planned.values,
+            "NISA Tsumitate": 0.0,
+            "NISA Growth": 0.0,
+            "Taxable": 0.0,
+        }
+    )
+
+    nisa_total_remaining = min(float(annual_investment), float(NISA_TSUMITATE_LIMIT + NISA_GROWTH_LIMIT))
+    tsumitate_remaining = float(NISA_TSUMITATE_LIMIT)
+    growth_remaining = float(NISA_GROWTH_LIMIT)
+
+    remaining = dict(zip(df["Ticker"], df["Planned Amount"]))
+
+    tsumitate_candidates = (
+        df[df["Ticker"].isin(TSUMITATE_ELIGIBLE)]
+        .sort_values("Expected Return", ascending=False)["Ticker"]
+        .tolist()
+    )
+    for ticker in tsumitate_candidates:
+        if tsumitate_remaining <= 0 or nisa_total_remaining <= 0:
+            break
+        take = min(float(remaining[ticker]), tsumitate_remaining, nisa_total_remaining)
+        df.loc[df["Ticker"] == ticker, "NISA Tsumitate"] = take
+        remaining[ticker] -= take
+        tsumitate_remaining -= take
+        nisa_total_remaining -= take
+
+    growth_candidates = (
+        df[
+            (~df["Ticker"].isin(NISA_EXCLUDED))
+        ]
+        .sort_values("Expected Return", ascending=False)["Ticker"]
+        .tolist()
+    )
+    for ticker in growth_candidates:
+        if growth_remaining <= 0 or nisa_total_remaining <= 0:
+            break
+        take = min(float(remaining[ticker]), growth_remaining, nisa_total_remaining)
+        df.loc[df["Ticker"] == ticker, "NISA Growth"] = take
+        remaining[ticker] -= take
+        growth_remaining -= take
+        nisa_total_remaining -= take
+
+    for ticker in df["Ticker"]:
+        df.loc[df["Ticker"] == ticker, "Taxable"] = max(0.0, float(remaining[ticker]))
+
+    tax_benefit_base = (df["NISA Tsumitate"] + df["NISA Growth"]) * df["Expected Return"].clip(lower=0.0)
+    annual_benefit = float(tax_benefit_base.sum() * float(tax_rate))
+    ten_year_benefit = annual_benefit * max(1, int(years))
+
+    return NisaAllocationResult(
+        allocation_df=df.sort_values("Planned Amount", ascending=False).reset_index(drop=True),
+        annual_tax_benefit=annual_benefit,
+        ten_year_tax_benefit=ten_year_benefit,
+        tsumitate_used=float(df["NISA Tsumitate"].sum()),
+        growth_used=float(df["NISA Growth"].sum()),
+        taxable_used=float(df["Taxable"].sum()),
+    )
 
 
 def fetch_price_history(
