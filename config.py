@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import tomllib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -22,6 +23,20 @@ def _read_streamlit_secret(key: str) -> str | None:
     return None
 
 
+def _read_local_secrets_file(key: str) -> str | None:
+    secrets_path = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+    if not secrets_path.exists():
+        return None
+    try:
+        raw = secrets_path.read_text(encoding="utf-8-sig")
+        data = tomllib.loads(raw)
+        if key in data and data[key] is not None:
+            return str(data[key]).strip()
+    except Exception:
+        return None
+    return None
+
+
 def get_setting(key: str, default: str | None = None) -> str | None:
     value = os.getenv(key)
     if value is not None and str(value).strip() != "":
@@ -29,6 +44,9 @@ def get_setting(key: str, default: str | None = None) -> str | None:
     secret_value = _read_streamlit_secret(key)
     if secret_value is not None and secret_value != "":
         return secret_value
+    file_secret_value = _read_local_secrets_file(key)
+    if file_secret_value is not None and file_secret_value != "":
+        return file_secret_value
     return default
 
 
