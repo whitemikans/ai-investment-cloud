@@ -26,7 +26,7 @@ def jpy(value: float) -> str:
 
 st.title("💼 ポートフォリオ（DB統合版）")
 apply_global_ui_tweaks()
-st.caption("#03対応: 取引登録はSQLite（investment.db）へ保存されます。")
+st.caption("取引登録は実行環境に応じて保存先を自動切替します（ローカル: SQLite / クラウド: PostgreSQL）。")
 
 with st.spinner("DBを初期化中..."):
     init_db()

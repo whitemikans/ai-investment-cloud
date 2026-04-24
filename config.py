@@ -32,16 +32,41 @@ def get_setting(key: str, default: str | None = None) -> str | None:
     return default
 
 
+def is_streamlit_cloud() -> bool:
+    sharing_mode = os.getenv("STREAMLIT_SHARING_MODE", "").strip().lower()
+    if sharing_mode in {"streamlit-app", "sharing"}:
+        return True
+    explicit_flag = os.getenv("IS_STREAMLIT_CLOUD", "").strip().lower()
+    if explicit_flag in {"1", "true", "yes", "on"}:
+        return True
+    return False
+
+
+def get_runtime_name() -> str:
+    return "cloud" if is_streamlit_cloud() else "local"
+
+
 def get_database_url() -> str:
-    raw = get_setting("DATABASE_URL", DEFAULT_SQLITE_URL) or DEFAULT_SQLITE_URL
+    if is_streamlit_cloud():
+        raw = (
+            get_setting("CLOUD_DATABASE_URL")
+            or get_setting("DATABASE_URL")
+            or DEFAULT_SQLITE_URL
+        )
+    else:
+        raw = get_setting("LOCAL_DATABASE_URL", DEFAULT_SQLITE_URL) or DEFAULT_SQLITE_URL
     # Supabase/Heroku style URL compatibility for SQLAlchemy
-    # e.g. postgres://... -> postgresql+psycopg://...
+    # e.g. postgres://... -> postgresql+psycopg2://...
     if raw.startswith("postgres://"):
-        return raw.replace("postgres://", "postgresql+psycopg://", 1)
+        return raw.replace("postgres://", "postgresql+psycopg2://", 1)
     if raw.startswith("postgresql://"):
-        return raw.replace("postgresql://", "postgresql+psycopg://", 1)
+        return raw.replace("postgresql://", "postgresql+psycopg2://", 1)
     return raw
 
 
 def get_app_password() -> str:
-    return get_setting("APP_PASSWORD", "admin123") or "admin123"
+    raw = get_setting("APP_PASSWORD", "admin123") or "admin123"
+    # Normalize accidental wrapping quotes from env/secrets, e.g. '"pass"' or "'pass'"
+    if len(raw) >= 2 and ((raw[0] == '"' and raw[-1] == '"') or (raw[0] == "'" and raw[-1] == "'")):
+        return raw[1:-1].strip()
+    return raw.strip()
