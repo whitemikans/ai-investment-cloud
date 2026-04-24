@@ -1,97 +1,298 @@
-﻿import streamlit as st
+﻿from __future__ import annotations
 
-from db.db_utils import init_db
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+import yfinance as yf
+
+from db.db_utils import get_portfolio_df_with_price, init_db
 from db.news_utils import init_news_tables
 from utils.auth import ensure_login, render_logout
-from utils.common import apply_global_ui_tweaks, log_event, render_footer, render_last_data_update
+from utils.common import apply_global_ui_tweaks, log_event, render_last_data_update
 
 
-st.set_page_config(page_title="AIポートフォリオ最適化ダッシュボード", page_icon="📊", layout="wide")
+PROJECT_ROOT = Path(__file__).resolve().parent
+DB_PATH = PROJECT_ROOT / "investment.db"
+
+
+@st.cache_data(ttl=300)
+def load_portfolio_market_df() -> pd.DataFrame:
+    try:
+        return get_portfolio_df_with_price()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_news_top3() -> pd.DataFrame:
+    if not DB_PATH.exists():
+        return pd.DataFrame(columns=["title", "url", "source", "published_at", "summary_ja"])
+    sql = """
+    SELECT title, url, source, published_at, COALESCE(summary_ja, '') AS summary_ja
+    FROM news_articles
+    ORDER BY published_at DESC, id DESC
+    LIMIT 3
+    """
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            return pd.read_sql_query(sql, conn)
+    except Exception:
+        return pd.DataFrame(columns=["title", "url", "source", "published_at", "summary_ja"])
+
+
+@st.cache_data(ttl=300)
+def calc_today_pnl(positions: tuple[tuple[str, float], ...]) -> float:
+    total = 0.0
+    for code, qty in positions:
+        try:
+            hist = yf.Ticker(code).history(period="5d", interval="1d")
+            if hist is None or hist.empty or len(hist) < 2:
+                continue
+            close = hist["Close"].dropna()
+            if len(close) < 2:
+                continue
+            diff = float(close.iloc[-1] - close.iloc[-2])
+            total += diff * float(qty)
+        except Exception:
+            continue
+    return float(total)
+
+
+def calc_fire_metrics(total_assets: float) -> tuple[float, float]:
+    fire_type = st.session_state.get("FIREタイプ", "Fat")
+    swr_map = {"Fat": 0.04, "Lean": 0.035, "Barista": 0.04, "Coast": 0.04}
+    swr = float(swr_map.get(str(fire_type), 0.04))
+
+    annual_expense = float(st.session_state.get("年間支出（円）", 3_600_000))
+    part_time_monthly = float(st.session_state.get("Barista収入（月額円）", 0))
+    part_time_annual = part_time_monthly * 12.0
+
+    fire_target = max(0.0, (annual_expense - part_time_annual) / max(1e-9, swr))
+    life_sim = st.session_state.get("life_sim_result")
+    if isinstance(life_sim, dict) and isinstance(life_sim.get("mc"), dict):
+        fire_prob = float(life_sim["mc"].get("fire_probability", 0.0))
+    else:
+        fire_prob = min(0.99, (total_assets / fire_target * 0.9) if fire_target > 0 else 0.0)
+    return fire_target, fire_prob
+
+
+def calc_optimization_score(portfolio_df: pd.DataFrame) -> float:
+    opt_payload = st.session_state.get("opt_payload")
+    if isinstance(opt_payload, dict):
+        selected = opt_payload.get("selected", {}) or {}
+        sharpe = float(selected.get("sharpe", 0.0))
+        weights = selected.get("weights", {}) or {}
+        w = pd.Series(weights, dtype=float)
+        if not w.empty and float(w.sum()) > 0:
+            w = w / float(w.sum())
+            effective_n = 1.0 / float((w**2).sum())
+            div_score = min(100.0, effective_n / max(1.0, len(w)) * 120.0)
+        else:
+            div_score = 50.0
+        sharpe_score = max(0.0, min(100.0, (sharpe + 0.2) / 1.6 * 100.0))
+        return float(0.6 * sharpe_score + 0.4 * div_score)
+
+    if portfolio_df.empty:
+        return 0.0
+    mv = portfolio_df["market_value"].fillna(0.0)
+    total = float(mv.sum())
+    if total <= 0:
+        return 0.0
+    weights = mv / total
+    concentration = float((weights**2).sum())
+    return float(max(0.0, min(100.0, (1.0 - concentration) * 130.0)))
+
+
+def build_rebalance_alerts(portfolio_df: pd.DataFrame) -> pd.DataFrame:
+    if portfolio_df.empty:
+        return pd.DataFrame(columns=["銘柄", "現在配分", "目標配分", "乖離", "提案"])
+    work = portfolio_df.copy()
+    work["market_value"] = work["market_value"].fillna(0.0)
+    total = float(work["market_value"].sum())
+    if total <= 0:
+        return pd.DataFrame(columns=["銘柄", "現在配分", "目標配分", "乖離", "提案"])
+
+    work["current_weight"] = work["market_value"] / total
+    target = 1.0 / max(1, len(work))
+    work["target_weight"] = target
+    work["diff"] = work["current_weight"] - work["target_weight"]
+    alerts = work[work["diff"].abs() >= 0.05].copy().sort_values("diff", key=lambda s: s.abs(), ascending=False)
+    if alerts.empty:
+        return pd.DataFrame(columns=["銘柄", "現在配分", "目標配分", "乖離", "提案"])
+
+    alerts["提案"] = alerts["diff"].apply(lambda v: "売却寄り" if v > 0 else "購入寄り")
+    return alerts.rename(
+        columns={
+            "stock_code": "銘柄",
+            "current_weight": "現在配分",
+            "target_weight": "目標配分",
+            "diff": "乖離",
+        }
+    )[["銘柄", "現在配分", "目標配分", "乖離", "提案"]]
+
+
+def get_upcoming_life_events(limit: int = 2) -> pd.DataFrame:
+    events = st.session_state.get("life_events", [])
+    if not events:
+        return pd.DataFrame(columns=["name", "age", "event_type", "amount"])
+    try:
+        current_age = int(st.session_state.get("現在の年齢", 35))
+    except Exception:
+        current_age = 35
+
+    df = pd.DataFrame(events)
+    if df.empty or "age" not in df.columns:
+        return pd.DataFrame(columns=["name", "age", "event_type", "amount"])
+    df["age"] = pd.to_numeric(df["age"], errors="coerce")
+    df = df.dropna(subset=["age"])
+    df = df[df["age"] >= current_age].sort_values("age").head(limit)
+    return df[[c for c in ["name", "age", "event_type", "amount"] if c in df.columns]]
+
+
+st.set_page_config(page_title="統合AI投資ダッシュボード", page_icon="🏠", layout="wide")
 ensure_login()
 apply_global_ui_tweaks()
-with st.spinner("ページを読み込み中..."):
+
+with st.spinner("初期化中..."):
     init_db()
     init_news_tables()
-    st.empty()
+
 render_last_data_update()
 render_logout()
-
 
 st.markdown(
     """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;800&display=swap');
 html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; }
-.hero-title {
-  font-size: clamp(1.8rem, 4.5vw, 3.1rem);
-  font-weight: 800;
-  background: linear-gradient(90deg, #00d4ff 0%, #2dd4bf 40%, #a3e635 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  margin: 0 0 .4rem 0;
-}
-.hero-sub { color: #cbd5e1; margin-bottom: 1.0rem; }
-.nav-card {
-  border: 1px solid rgba(0, 212, 255, 0.35);
+.hero {
+  border: 1px solid rgba(59,130,246,.32);
   border-radius: 14px;
-  padding: 16px;
-  background: linear-gradient(145deg, rgba(0,212,255,0.08), rgba(45,212,191,0.06));
+  padding: 16px 18px;
+  background: linear-gradient(135deg, rgba(37,99,235,.16), rgba(16,185,129,.10));
+}
+.kpi-card {
+  border: 1px solid rgba(148,163,184,.28);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(15,23,42,.25);
+}
+.footer-v2 {
+  margin-top: 1.2rem;
+  padding-top: .8rem;
+  border-top: 1px solid rgba(148,163,184,.25);
+  text-align: center;
+  color: #94a3b8;
 }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-st.markdown("<h1 class='hero-title'>AIライフプラン統合ダッシュボード #08</h1>", unsafe_allow_html=True)
-st.markdown(
-    "<div class='hero-sub'>Powered by AI × Python × Streamlit × GitHub Actions × Supabase/PostgreSQL</div>",
-    unsafe_allow_html=True,
-)
+st.markdown("<div class='hero'><h2>🏠 統合ダッシュボード</h2><div>講座 #02 #04 #05 #07 #08 の主要指標を1画面で確認</div></div>", unsafe_allow_html=True)
 
-col1, col2, col3, col4, col5 = st.columns(5)
-with col1:
-    st.markdown("<div class='nav-card'><h4>📈 株価分析</h4><p>ローソク足・移動平均・5軸評価</p></div>", unsafe_allow_html=True)
-    st.page_link("pages/01_株価分析.py", label="株価分析ページへ", icon="📈")
-with col2:
-    st.markdown("<div class='nav-card'><h4>🏢 企業比較</h4><p>ヒートマップ・比較表・重ねレーダー</p></div>", unsafe_allow_html=True)
-    st.page_link("pages/02_企業比較.py", label="企業比較ページへ", icon="🏢")
-with col3:
-    st.markdown("<div class='nav-card'><h4>💼 ポートフォリオ</h4><p>DB保存の取引登録と保有管理</p></div>", unsafe_allow_html=True)
-    st.page_link("pages/03_ポートフォリオ.py", label="ポートフォリオページへ", icon="💼")
-with col4:
-    st.markdown("<div class='nav-card'><h4>📒 取引履歴</h4><p>フィルター・集計・月次回数</p></div>", unsafe_allow_html=True)
-    st.page_link("pages/04_取引履歴.py", label="取引履歴ページへ", icon="📒")
-with col5:
-    st.markdown("<div class='nav-card'><h4>💰 配当管理</h4><p>配当登録・年次集計・進捗</p></div>", unsafe_allow_html=True)
-    st.page_link("pages/05_配当管理.py", label="配当管理ページへ", icon="💰")
+portfolio_df = load_portfolio_market_df()
+portfolio_df = portfolio_df.copy() if isinstance(portfolio_df, pd.DataFrame) else pd.DataFrame()
+if portfolio_df.empty:
+    positions = tuple()
+    total_assets = 0.0
+else:
+    portfolio_df["market_value"] = pd.to_numeric(portfolio_df["market_value"], errors="coerce").fillna(0.0)
+    portfolio_df["total_quantity"] = pd.to_numeric(portfolio_df["total_quantity"], errors="coerce").fillna(0.0)
+    total_assets = float(portfolio_df["market_value"].sum())
+    positions = tuple((str(r["stock_code"]), float(r["total_quantity"])) for _, r in portfolio_df.iterrows())
 
-st.info("左サイドバーまたは上記リンクからページを切り替えてください。")
+today_pnl = calc_today_pnl(positions)
+fire_target, fire_probability = calc_fire_metrics(total_assets)
+opt_score = calc_optimization_score(portfolio_df)
 
-st.markdown("### #03 追加ページ")
-st.page_link("pages/06_資産推移.py", label="資産推移ページへ", icon="📉")
-st.page_link("pages/07_損益計算レポート.py", label="損益計算レポートページへ", icon="🧾")
-st.page_link("pages/08_取引分析.py", label="取引分析ダッシュボードへ", icon="🎯")
-st.page_link("pages/09_配当詳細分析.py", label="配当詳細分析ページへ", icon="💹")
-st.page_link("pages/10_税金計算レポート.py", label="税金計算レポートページへ", icon="🧾")
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("総資産額", f"¥{total_assets:,.0f}")
+k2.metric("今日の損益", f"¥{today_pnl:,.0f}")
+k3.metric("FIRE達成確率", f"{fire_probability * 100:.1f}%")
+k4.metric("最適化スコア", f"{opt_score:.1f}")
 
-st.markdown("### #04 ニュース分析ページ")
-st.page_link("pages/11_ニュースフィード.py", label="ニュースフィードページへ", icon="📰")
-st.page_link("pages/12_銘柄別ニュース.py", label="銘柄別ニュースビューへ", icon="🏢")
-st.page_link("pages/13_キーワードアラート.py", label="キーワードアラート設定へ", icon="🔔")
-st.page_link("pages/14_経済指標カレンダー.py", label="経済指標カレンダーページへ", icon="📅")
+left, right = st.columns([1.2, 1])
+with left:
+    st.markdown("### ポートフォリオ概要")
+    if portfolio_df.empty:
+        st.info("ポートフォリオデータがありません。")
+    else:
+        pie_df = portfolio_df[["stock_code", "market_value"]].copy()
+        pie_df = pie_df[pie_df["market_value"] > 0]
+        fig_pie = px.pie(pie_df, values="market_value", names="stock_code", hole=0.45, template="plotly_dark")
+        fig_pie.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-st.markdown("### #05 バックテストページ")
-st.page_link("pages/15_バックテスト.py", label="バックテストページへ", icon="📊")
-st.page_link("pages/16_過去の結果一覧.py", label="過去の結果一覧ページへ", icon="📋")
+with right:
+    st.markdown("### FIREゲージ")
+    progress = (total_assets / fire_target) if fire_target > 0 else 0.0
+    progress = max(0.0, min(1.5, progress))
+    gauge = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=progress * 100,
+            number={"suffix": "%"},
+            title={"text": "資産 / FIRE目標"},
+            gauge={
+                "axis": {"range": [0, 150]},
+                "bar": {"color": "#22c55e"},
+                "steps": [
+                    {"range": [0, 60], "color": "#1f2937"},
+                    {"range": [60, 100], "color": "#334155"},
+                    {"range": [100, 150], "color": "#065f46"},
+                ],
+            },
+        )
+    )
+    gauge.update_layout(template="plotly_dark", height=300, margin=dict(l=20, r=20, t=40, b=10))
+    st.plotly_chart(gauge, use_container_width=True)
+    st.caption(f"目標資産: ¥{fire_target:,.0f}")
 
-st.markdown("### #06 クラウド運用ページ")
-st.page_link("pages/17_管理者ヘルスチェック.py", label="管理者ヘルスチェックへ", icon="🩺")
+st.markdown("### 今日のAIニュースサマリー（上位3件）")
+news_df = load_news_top3()
+if news_df.empty:
+    st.info("ニュースデータがありません。")
+else:
+    for i, row in news_df.reset_index(drop=True).iterrows():
+        summary = str(row.get("summary_ja", "")).strip() or "要約なし"
+        source = str(row.get("source", ""))
+        published = str(row.get("published_at", ""))
+        title = str(row.get("title", "(タイトルなし)"))
+        url = str(row.get("url", "")).strip()
+        with st.container(border=True):
+            st.markdown(f"**{i + 1}. {title}**")
+            st.caption(f"{source} | {published}")
+            st.write(summary)
+            if url:
+                st.link_button("ニュースを開く", url)
 
-st.markdown("### #07 ポートフォリオ最適化ページ")
-st.page_link("pages/18_ポートフォリオ最適化.py", label="ポートフォリオ最適化ページへ", icon="📊")
+b1, b2 = st.columns(2)
+with b1:
+    st.markdown("### 直近のリバランスアラート")
+    alert_df = build_rebalance_alerts(portfolio_df)
+    if alert_df.empty:
+        st.success("大きな配分乖離はありません。")
+    else:
+        st.dataframe(
+            alert_df.style.format({"現在配分": "{:.1%}", "目標配分": "{:.1%}", "乖離": "{:+.1%}"}),
+            use_container_width=True,
+            height=220,
+        )
 
-st.markdown("### #08 ライフプラン/FIREページ")
-st.page_link("pages/19_ライフプラン.py", label="ライフプラン/FIREシミュレーターへ", icon="🔥")
+with b2:
+    st.markdown("### 今後のライフイベント")
+    next_events = get_upcoming_life_events(limit=2)
+    if next_events.empty:
+        st.info("登録済みイベントがありません。")
+    else:
+        show = next_events.rename(columns={"name": "イベント", "age": "年齢", "event_type": "タイプ", "amount": "金額"})
+        st.dataframe(show.style.format({"金額": "{:,.0f}"}), use_container_width=True, height=220)
 
-render_footer()
-log_event("open_top", "app.py loaded")
+st.markdown("<div class='footer-v2'>Powered by AI Investment Team | v2.0</div>", unsafe_allow_html=True)
+log_event("open_top", f"dashboard_v2_loaded {datetime.now().isoformat(timespec='seconds')}")

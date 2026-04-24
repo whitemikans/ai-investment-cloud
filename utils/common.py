@@ -43,6 +43,45 @@ def render_footer() -> None:
     )
 
 
+def render_unified_sidebar_navigation() -> None:
+    with st.sidebar:
+        st.markdown("## ナビゲーション")
+        st.page_link("app.py", label="🏠 ダッシュボード（トップ）")
+
+        with st.expander("📱 ポートフォリオ概要", expanded=True):
+            st.page_link("pages/01_株価分析.py", label="株価分析")
+            st.page_link("pages/02_企業比較.py", label="企業比較")
+            st.page_link("pages/03_ポートフォリオ.py", label="ポートフォリオ")
+
+        with st.expander("📒 取引概要", expanded=False):
+            st.page_link("pages/04_取引履歴.py", label="取引履歴")
+            st.page_link("pages/05_配当管理.py", label="配当管理")
+            st.page_link("pages/06_資産推移.py", label="資産推移")
+            st.page_link("pages/07_損益計算レポート.py", label="損益計算レポート")
+
+        with st.expander("📰 AIニュースフィード", expanded=False):
+            st.page_link("pages/11_ニュースフィード.py", label="ニュースフィード")
+            st.page_link("pages/12_銘柄別ニュース.py", label="銘柄別ニュース")
+            st.page_link("pages/13_キーワードアラート.py", label="キーワードアラート")
+            st.page_link("pages/14_経済指標カレンダー.py", label="経済指標カレンダー")
+
+        with st.expander("📊 バックテスト", expanded=False):
+            st.page_link("pages/15_バックテスト.py", label="バックテスト")
+            st.page_link("pages/16_過去の結果一覧.py", label="過去の結果一覧")
+
+        with st.expander("⚖️ ポートフォリオ最適化", expanded=False):
+            st.page_link("pages/18_ポートフォリオ最適化.py", label="ポートフォリオ最適化")
+
+        with st.expander("📋 ライフプラン", expanded=False):
+            st.page_link("pages/19_ライフプラン.py", label="ライフプラン")
+
+        with st.expander("🤖 AI分析", expanded=False):
+            st.page_link("pages/20_AI分析.py", label="AI分析")
+
+        with st.expander("🏥 システムヘルスチェック", expanded=False):
+            st.page_link("pages/17_管理者ヘルスチェック.py", label="管理者ヘルスチェック")
+
+
 def apply_global_ui_tweaks() -> None:
     # Enforce authentication on every page in #06 cloud mode.
     try:
@@ -55,14 +94,8 @@ def apply_global_ui_tweaks() -> None:
     st.markdown(
         """
 <style>
-/* Sidebar page menu: avoid ellipsis and allow wrapping */
-[data-testid="stSidebarNav"] a,
-[data-testid="stSidebarNav"] a * {
-  white-space: normal !important;
-  overflow: visible !important;
-  text-overflow: clip !important;
-  line-height: 1.25 !important;
-}
+/* Hide Streamlit default multipage links */
+[data-testid="stSidebarNav"] { display: none !important; }
 
 /* DataFrame cells: show full text with wrapping */
 [data-testid="stDataFrame"] [role="gridcell"],
@@ -89,6 +122,7 @@ def apply_global_ui_tweaks() -> None:
 """,
         unsafe_allow_html=True,
     )
+    render_unified_sidebar_navigation()
 
 
 def touch_last_data_update() -> None:
