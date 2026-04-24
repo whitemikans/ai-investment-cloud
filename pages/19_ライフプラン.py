@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,42 @@ from utils.fire_simulator import (
 from utils.pension_simulator import build_pension_table, calc_break_even_age, calc_pension_monthly
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _run_simulations_cached(
+    sim_params_json: str,
+    events_json: str,
+    pension_annual: float,
+    n_sims: int,
+    return_std: float,
+) -> tuple[dict, dict]:
+    sim_params = json.loads(sim_params_json)
+    events = json.loads(events_json)
+
+    sim_input = FireSimulationInput(
+        current_age=int(sim_params["current_age"]),
+        annual_income=float(sim_params["annual_income"]),
+        annual_expense=float(sim_params["annual_expense"]),
+        current_assets=float(sim_params["current_assets"]),
+        annual_return=float(sim_params["annual_return"]),
+        inflation_rate=float(sim_params["inflation_rate"]),
+        safe_withdrawal_rate=float(sim_params["safe_withdrawal_rate"]),
+        part_time_income_annual=float(sim_params["part_time_income_annual"]),
+    )
+    events_df = pd.DataFrame(events) if events else pd.DataFrame(
+        columns=["name", "age", "event_type", "amount", "duration_years", "memo"]
+    )
+
+    det = simulate_fire_deterministic(sim_input=sim_input, events_df=events_df, pension_annual=float(pension_annual))
+    mc = simulate_fire_monte_carlo(
+        sim_input=sim_input,
+        events_df=events_df,
+        pension_annual=float(pension_annual),
+        n_sims=int(n_sims),
+        return_std=float(return_std),
+    )
+    return det, mc
+
+
 st.set_page_config(page_title="ライフプラン/FIREシミュレーター", page_icon="🔥", layout="wide")
 apply_global_ui_tweaks()
 st.title("🔥 #08 ライフプラン・FIREシミュレーター")
@@ -32,6 +69,13 @@ if "life_events" not in st.session_state:
     st.session_state["life_events"] = []
 if "life_ai_report" not in st.session_state:
     st.session_state["life_ai_report"] = ""
+if "life_status_message" not in st.session_state:
+    st.session_state["life_status_message"] = ""
+if "life_run_what_if" not in st.session_state:
+    st.session_state["life_run_what_if"] = False
+
+if st.session_state["life_status_message"]:
+    st.info(st.session_state["life_status_message"])
 
 
 with st.sidebar:
@@ -78,14 +122,25 @@ events_df = pd.DataFrame(st.session_state["life_events"]) if st.session_state["l
 pension_monthly = calc_pension_monthly(pension_type, pension_years, pension_income, pension_start_age)
 pension_annual = pension_monthly * 12.0
 
-det = simulate_fire_deterministic(sim_input=sim_input, events_df=events_df, pension_annual=pension_annual)
-mc = simulate_fire_monte_carlo(
-    sim_input=sim_input,
-    events_df=events_df,
-    pension_annual=pension_annual,
-    n_sims=int(n_sims),
-    return_std=float(return_std),
-)
+sim_params = {
+    "current_age": current_age,
+    "annual_income": float(annual_income),
+    "annual_expense": float(annual_expense),
+    "current_assets": float(current_assets),
+    "annual_return": float(annual_return),
+    "inflation_rate": float(inflation_rate),
+    "safe_withdrawal_rate": float(safe_withdrawal_rate),
+    "part_time_income_annual": float(part_time_income_monthly * 12),
+}
+with st.spinner("シミュレーション計算中..."):
+    det, mc = _run_simulations_cached(
+        sim_params_json=json.dumps(sim_params, ensure_ascii=False, sort_keys=True),
+        events_json=json.dumps(st.session_state["life_events"], ensure_ascii=False, sort_keys=True),
+        pension_annual=float(pension_annual),
+        n_sims=int(n_sims),
+        return_std=float(return_std),
+    )
+st.session_state["life_status_message"] = ""
 
 fire_target_now = (sim_input.annual_expense - sim_input.part_time_income_annual - pension_annual) / max(1e-9, sim_input.safe_withdrawal_rate)
 fire_target_now = max(0.0, fire_target_now)
@@ -152,6 +207,7 @@ with tabs[1]:
                         "memo": "",
                     }
                 )
+                st.session_state["life_status_message"] = f"{p[0]} を追加しました。シミュレーションを再計算しています..."
                 st.rerun()
 
     st.markdown("#### イベント追加")
@@ -176,7 +232,7 @@ with tabs[1]:
                     "memo": memo,
                 }
             )
-            st.success("イベントを追加しました。")
+            st.session_state["life_status_message"] = "イベントを追加しました。シミュレーションを再計算しています..."
             st.rerun()
 
     st.markdown("#### 登録済みイベント")
@@ -244,51 +300,55 @@ with tabs[3]:
         default=["ベースケース", "年収+100万円", "リターン5%"],
         max_selections=3,
     )
+    if st.button("What-Ifを計算/更新", use_container_width=True):
+        st.session_state["life_run_what_if"] = True
 
-    compare_rows = []
-    fig_compare = go.Figure()
-    for s in scenarios:
-        if s["name"] not in selected_names:
-            continue
+    if not st.session_state["life_run_what_if"]:
+        st.info("What-Ifは重い処理のため、ボタン押下時のみ計算します。")
+    else:
+        compare_rows = []
+        fig_compare = go.Figure()
+        with st.spinner("What-Ifシナリオを計算中..."):
+            for s in scenarios:
+                if s["name"] not in selected_names:
+                    continue
 
-        override = s["overrides"]
-        scenario_input = FireSimulationInput(
-            current_age=current_age,
-            annual_income=float(override.get("annual_income", annual_income)),
-            annual_expense=float(annual_expense),
-            current_assets=float(current_assets),
-            annual_return=float(override.get("annual_return", annual_return)),
-            inflation_rate=float(inflation_rate),
-            safe_withdrawal_rate=float(safe_withdrawal_rate),
-            part_time_income_annual=float(override.get("part_time_income_annual", part_time_income_monthly * 12)),
-        )
+                override = s["overrides"]
+                scenario_params = {
+                    "current_age": current_age,
+                    "annual_income": float(override.get("annual_income", annual_income)),
+                    "annual_expense": float(annual_expense),
+                    "current_assets": float(current_assets),
+                    "annual_return": float(override.get("annual_return", annual_return)),
+                    "inflation_rate": float(inflation_rate),
+                    "safe_withdrawal_rate": float(safe_withdrawal_rate),
+                    "part_time_income_annual": float(override.get("part_time_income_annual", part_time_income_monthly * 12)),
+                }
+                _, scenario_mc = _run_simulations_cached(
+                    sim_params_json=json.dumps(scenario_params, ensure_ascii=False, sort_keys=True),
+                    events_json=json.dumps(st.session_state["life_events"], ensure_ascii=False, sort_keys=True),
+                    pension_annual=float(pension_annual),
+                    n_sims=2500,
+                    return_std=float(return_std),
+                )
+                pct = scenario_mc["percentiles"]
+                fig_compare.add_trace(go.Scatter(x=pct["age"], y=pct["p50"], mode="lines", name=s["name"]))
 
-        scenario_mc = simulate_fire_monte_carlo(
-            sim_input=scenario_input,
-            events_df=events_df,
-            pension_annual=pension_annual,
-            n_sims=2500,
-            return_std=float(return_std),
-            seed=42,
-        )
-        pct = scenario_mc["percentiles"]
-        fig_compare.add_trace(go.Scatter(x=pct["age"], y=pct["p50"], mode="lines", name=s["name"]))
+                compare_rows.append(
+                    {
+                        "シナリオ": s["name"],
+                        "FIRE確率": scenario_mc["fire_probability"],
+                        "FIRE年齢(中央値)": None if scenario_mc["fire_age_median"] is None else int(scenario_mc["fire_age_median"]),
+                        "90歳資産(中央値)": float(pct["p50"].iloc[-1]),
+                    }
+                )
 
-        compare_rows.append(
-            {
-                "シナリオ": s["name"],
-                "FIRE確率": scenario_mc["fire_probability"],
-                "FIRE年齢(中央値)": None if scenario_mc["fire_age_median"] is None else int(scenario_mc["fire_age_median"]),
-                "90歳資産(中央値)": float(pct["p50"].iloc[-1]),
-            }
-        )
+        fig_compare.update_layout(template="plotly_dark", height=420, xaxis_title="年齢", yaxis_title="資産(中央値, 円)")
+        st.plotly_chart(fig_compare, use_container_width=True)
 
-    fig_compare.update_layout(template="plotly_dark", height=420, xaxis_title="年齢", yaxis_title="資産(中央値, 円)")
-    st.plotly_chart(fig_compare, use_container_width=True)
-
-    if compare_rows:
-        compare_df = pd.DataFrame(compare_rows)
-        st.dataframe(compare_df.style.format({"FIRE確率": "{:.1%}", "90歳資産(中央値)": "¥{:,.0f}"}), use_container_width=True)
+        if compare_rows:
+            compare_df = pd.DataFrame(compare_rows)
+            st.dataframe(compare_df.style.format({"FIRE確率": "{:.1%}", "90歳資産(中央値)": "¥{:,.0f}"}), use_container_width=True)
 
 with tabs[4]:
     st.markdown("#### AIファイナンシャルアドバイザー")

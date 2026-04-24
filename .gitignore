@@ -9,4 +9,4 @@ data/backups/
 scheduler.log
 dashboard_events.log
 *.db
-
+.streamlit/secrets.toml

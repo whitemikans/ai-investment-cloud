@@ -38,6 +38,20 @@ def _read_local_secrets_file(key: str) -> str | None:
 
 
 def get_setting(key: str, default: str | None = None) -> str | None:
+    # For Gemini settings, prefer Streamlit/local secrets over environment
+    # to avoid stale shell environment variables overriding updated keys.
+    if key in {"GEMINI_API_KEY", "GEMINI_MODEL"}:
+        secret_value = _read_streamlit_secret(key)
+        if secret_value is not None and secret_value != "":
+            return secret_value
+        file_secret_value = _read_local_secrets_file(key)
+        if file_secret_value is not None and file_secret_value != "":
+            return file_secret_value
+        value = os.getenv(key)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+        return default
+
     value = os.getenv(key)
     if value is not None and str(value).strip() != "":
         return str(value).strip()
