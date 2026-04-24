@@ -10,6 +10,24 @@ from sqlalchemy import text
 from .models import engine
 
 
+def _sqlite_has_column(con, table_name: str, column_name: str) -> bool:
+    rows = con.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+    return any(str(row[1]) == column_name for row in rows)
+
+
+def _ensure_agent_feedback_columns(con, backend: str) -> None:
+    if backend == "sqlite":
+        if not _sqlite_has_column(con, "agent_feedback", "date"):
+            con.execute(text("ALTER TABLE agent_feedback ADD COLUMN date TEXT"))
+        if not _sqlite_has_column(con, "agent_feedback", "agent_name"):
+            con.execute(text("ALTER TABLE agent_feedback ADD COLUMN agent_name TEXT"))
+        return
+
+    # PostgreSQL: avoid transaction abort by using IF NOT EXISTS.
+    con.execute(text("ALTER TABLE agent_feedback ADD COLUMN IF NOT EXISTS date TEXT"))
+    con.execute(text("ALTER TABLE agent_feedback ADD COLUMN IF NOT EXISTS agent_name TEXT"))
+
+
 def init_ai_team_tables() -> None:
     backend = engine.url.get_backend_name().lower()
     is_sqlite = backend == "sqlite"
@@ -71,14 +89,7 @@ def init_ai_team_tables() -> None:
             )
         )
         # Lightweight migration for existing tables.
-        for ddl in [
-            "ALTER TABLE agent_feedback ADD COLUMN date TEXT",
-            "ALTER TABLE agent_feedback ADD COLUMN agent_name TEXT",
-        ]:
-            try:
-                con.execute(text(ddl))
-            except Exception:
-                pass
+        _ensure_agent_feedback_columns(con, backend)
         con.execute(
             text(
                 """
