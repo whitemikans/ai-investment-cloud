@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta
 
@@ -119,6 +120,19 @@ def load_base_recommendations(lookback_days: int = 365) -> tuple[pd.DataFrame, d
         {"cutoff": cutoff},
     )
 
+    report_rows, rp_err = _safe_read_sql(
+        """
+        SELECT
+          COALESCE(created_at, '') AS recommendation_date,
+          COALESCE(recommendations_json, '[]') AS recommendations_json
+        FROM ai_team_reports
+        WHERE COALESCE(created_at, '') >= :cutoff
+        ORDER BY created_at DESC
+        LIMIT 300
+        """,
+        {"cutoff": cutoff},
+    )
+
     rec_rows: list[dict] = []
     if not research.empty:
         for r in research.itertuples(index=False):
@@ -139,7 +153,38 @@ def load_base_recommendations(lookback_days: int = 365) -> tuple[pd.DataFrame, d
 
     research_expanded = pd.DataFrame(rec_rows)
 
-    frames = [df for df in [feedback, research_expanded] if not df.empty]
+    report_expanded_rows: list[dict] = []
+    if not report_rows.empty:
+        for rr in report_rows.itertuples(index=False):
+            dt = _to_dt(getattr(rr, "recommendation_date", ""))
+            if dt is None:
+                continue
+            raw = str(getattr(rr, "recommendations_json", "[]") or "[]")
+            try:
+                parsed_raw = json.loads(raw)
+            except Exception:
+                parsed_raw = []
+            if not isinstance(parsed_raw, list) or not parsed_raw:
+                continue
+            for item in parsed_raw:
+                if not isinstance(item, dict):
+                    continue
+                t = _normalize_ticker(item.get("ticker", ""))
+                if not t:
+                    continue
+                action = str(item.get("action", "hold"))
+                report_expanded_rows.append(
+                    {
+                        "recommendation_date": dt.strftime("%Y-%m-%d"),
+                        "ticker": t,
+                        "source": "ai_team_report",
+                        "ai_recommendation": action,
+                        "human_decision": "",
+                    }
+                )
+    report_expanded = pd.DataFrame(report_expanded_rows)
+
+    frames = [df for df in [feedback, research_expanded, report_expanded] if not df.empty]
     if not frames:
         return (
             pd.DataFrame(columns=["recommendation_date", "ticker", "source", "ai_recommendation", "human_decision"]),
@@ -147,8 +192,11 @@ def load_base_recommendations(lookback_days: int = 365) -> tuple[pd.DataFrame, d
                 "feedback_rows": int(len(feedback)),
                 "research_rows": int(len(research)),
                 "research_expanded_rows": int(len(research_expanded)),
+                "report_rows": int(len(report_rows)),
+                "report_expanded_rows": int(len(report_expanded)),
                 "feedback_error": fb_err,
                 "research_error": rs_err,
+                "report_error": rp_err,
             },
         )
 
@@ -162,8 +210,11 @@ def load_base_recommendations(lookback_days: int = 365) -> tuple[pd.DataFrame, d
             "feedback_rows": int(len(feedback)),
             "research_rows": int(len(research)),
             "research_expanded_rows": int(len(research_expanded)),
+            "report_rows": int(len(report_rows)),
+            "report_expanded_rows": int(len(report_expanded)),
             "feedback_error": fb_err,
             "research_error": rs_err,
+            "report_error": rp_err,
         },
     )
 
@@ -263,7 +314,7 @@ def track_recommendation_performance(lookback_days: int = 365) -> dict:
 
     out = pd.DataFrame(rows)
     if out.empty:
-        return {"tracked": 0, "message": "no computed rows"}
+        return {"tracked": 0, "message": "no computed rows", "source_status": src}
 
     with engine.begin() as con:
         con.execute(text("DELETE FROM agent_recommendation_performance"))
@@ -275,6 +326,7 @@ def track_recommendation_performance(lookback_days: int = 365) -> dict:
         "tracked": int(len(out)),
         "buy_recommendations": int(len(buy_df)),
         "buy_win_rate_1m": round(buy_win_rate, 2),
+        "source_status": src,
     }
 
 
