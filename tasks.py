@@ -33,8 +33,13 @@ def create_research_task(researcher: object):
 
 def create_analysis_task(analyst: object, research_task: object):
     return _mk_task(
-        description="収集ニュースの注目銘柄について、テクニカル/ファンダ分析を行い5軸評価を作成してください。",
-        expected_output="銘柄別5軸評価、推奨度、推奨アクション",
+        description=(
+            "リサーチャーが収集したニュースで注目された銘柄について、"
+            "テクニカル分析とファンダメンタルズ分析を実行してください。"
+            "各銘柄について5軸評価スコア（ニュース/テクニカル/バリュエーション/成長性/リスク）を算出し、"
+            "総合推奨度（1〜5）と推奨アクション（買い/保持/売り）を決定してください。"
+        ),
+        expected_output="各銘柄の5軸評価スコア、総合推奨度（1〜5）、推奨アクション（買い/保持/売り）",
         agent=analyst,
         context=[research_task],
     )
@@ -56,4 +61,3 @@ def create_report_task(reporter: object, research_task: object, analysis_task: o
         agent=reporter,
         context=[research_task, analysis_task, risk_task],
     )
-
