@@ -73,7 +73,7 @@ def create_risk_task(risk_manager: object, research_task: object, analysis_task:
 
 def create_report_task(reporter: object, research_task: object, analysis_task: object, risk_task: object):
     return _mk_task(
-        description="全結果を統合し、5分で読めるデイリーレポートを作成して通知してください。",
+        description="全結果を統合し、5分で読めるデイリーレポートを作成し、レポートをDiscordに送信してください。",
         expected_output="エグゼクティブサマリー、推奨アクション、免責事項付きレポート",
         agent=reporter,
         context=[research_task, analysis_task, risk_task],
