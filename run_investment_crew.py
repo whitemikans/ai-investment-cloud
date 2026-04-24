@@ -7,6 +7,7 @@ from datetime import datetime
 
 import pandas as pd
 from sqlalchemy import text
+import yfinance as yf
 
 from agents import create_analyst, create_reporter, create_researcher, create_risk_manager
 from db.ai_team_utils import init_ai_team_tables, save_ai_team_report
@@ -49,26 +50,44 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
     for r in recs[:3]:
         actions.append(f"{r.get('ticker','-')}: {r.get('action','保持')} ({r.get('stars',3)}★)")
 
-    summary = (
-        f"ニュース処理件数: {int(research.get('processed', 0))}件 / "
-        f"リスクスコア: {risk_score} / "
-        f"注目銘柄数: {len(recs)}"
+    market = _get_market_snapshot()
+    sentiment = "やや強気" if risk_level == "normal" else ("中立" if risk_level == "warning" else "警戒")
+    summary_line1 = f"ニュース処理件数 {int(research.get('processed', 0))}件、注目銘柄 {len(recs)}件。"
+    summary_line2 = f"リスクスコア {risk_score}（{risk_level}）。"
+    summary_line3 = "本日の重要ポイントは上位3点に要約しました。"
+    summary = "\n".join([summary_line1, summary_line2, summary_line3])
+    market_overview = (
+        f"S&P500: {market.get('sp500_text', 'N/A')} / "
+        f"為替(ドル円): {market.get('usdjpy_text', 'N/A')} / "
+        f"VIX: {market.get('vix_text', 'N/A')} / "
+        f"センチメント: {sentiment}"
     )
-    market_overview = f"センチメントや市場変動を踏まえ、総合判断は {risk_level}。"
     risk_alerts = " / ".join(risk.get("warnings", [])) if isinstance(risk.get("warnings"), list) else str(risk.get("warnings", ""))
+    notable_lines = []
+    for r in recs[:3]:
+        notable_lines.append(f"- {r.get('ticker','-')}: 推奨度 {r.get('stars',3)} / {r.get('action','保持')}")
 
     lines = [
         "📝 AI投資チーム デイリーレポート",
         f"日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "",
-        f"📋 サマリー: {summary}",
+        "📋 エグゼクティブサマリー（3行）",
+        summary_line1,
+        summary_line2,
+        summary_line3,
         f"📰 市場概況: {market_overview}",
+        "📊 注目銘柄評価:",
+    ]
+    lines.extend(notable_lines or ["- 該当なし"])
+    lines.extend(
+        [
         f"🛡️ リスク: {risk_alerts or '重大警告なし'}",
         "📊 推奨アクション:",
-    ]
+        ]
+    )
     for a in actions:
         lines.append(f"- {a}")
-    lines.append("⚠️ 本情報は一般情報であり投資判断は自己責任です。")
+    lines.append("⚠️ 免責事項: 本情報は一般情報であり、投資判断はご自身の責任でお願いします。")
     full = "\n".join(lines)
 
     return {
@@ -81,6 +100,27 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
         "actions": actions,
         "full_report": full,
     }
+
+
+def _get_market_snapshot() -> dict:
+    """S&P500 / VIX / USDJPY の直近変動を取得する。"""
+    out = {"sp500_text": "N/A", "vix_text": "N/A", "usdjpy_text": "N/A"}
+    symbols = {"sp500_text": "^GSPC", "vix_text": "^VIX", "usdjpy_text": "JPY=X"}
+    for key, ticker in symbols.items():
+        try:
+            hist = yf.Ticker(ticker).history(period="5d")
+            if hist is None or hist.empty:
+                continue
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            if close.empty:
+                continue
+            cur = float(close.iloc[-1])
+            prev = float(close.iloc[-2]) if len(close) >= 2 else cur
+            diff = ((cur / prev) - 1.0) * 100.0 if prev else 0.0
+            out[key] = f"{cur:,.2f} ({diff:+.2f}%)"
+        except Exception:
+            continue
+    return out
 
 
 def _local_fallback_pipeline() -> dict:
