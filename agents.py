@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from sqlalchemy import text
+
+from db.models import engine
 
 from tools.analysis_tools import fundamental_analysis, technical_analysis
 from tools.notification_tools import send_discord_message
@@ -28,6 +31,30 @@ def _mk_agent(role: str, goal: str, backstory: str, tools: list):
     return Agent(role=role, goal=goal, backstory=backstory, tools=tools, verbose=True)
 
 
+def _feedback_hint_for_analyst() -> str:
+    """Build a short prompt hint from historical human feedback."""
+    try:
+        sql = """
+        SELECT
+          SUM(CASE WHEN ai_recommendation='買い' AND human_decision='却下' THEN 1 ELSE 0 END) AS rejected_buy_count,
+          SUM(CASE WHEN ai_recommendation='買い' AND human_decision='却下' AND LOWER(COALESCE(human_reason,'')) LIKE '%per%' THEN 1 ELSE 0 END) AS rejected_buy_per_count
+        FROM agent_feedback
+        """
+        with engine.begin() as con:
+            row = con.execute(text(sql)).mappings().first()
+        if not row:
+            return ""
+        rejected_buy = int(row.get("rejected_buy_count") or 0)
+        rejected_buy_per = int(row.get("rejected_buy_per_count") or 0)
+        if rejected_buy_per >= 3:
+            return "過去のフィードバックで、高PER銘柄の買い推奨は却下率が高い傾向があります。バリュエーションをより厳格に評価してください。"
+        if rejected_buy >= 5:
+            return "過去のフィードバックで買い推奨の却下が一定数あります。推奨前にリスクと割高感の説明を強化してください。"
+    except Exception:
+        return ""
+    return ""
+
+
 def create_researcher():
     return _mk_agent(
         role="シニアマーケットリサーチャー",
@@ -42,6 +69,7 @@ def create_researcher():
 
 
 def create_analyst():
+    feedback_hint = _feedback_hint_for_analyst()
     return _mk_agent(
         role="チーフ投資アナリスト",
         goal="リサーチャーから受け取った情報を分析し、具体的な投資推奨を行う",
@@ -50,6 +78,7 @@ def create_analyst():
             "ヘッジファンドのCIOを務めた経験を持つ投資のプロフェッショナルです。"
             "CFA資格を保有し、ファンダメンタルズ分析とテクニカル分析の両方に精通しています。"
             "過去10年の推奨銘柄の勝率は68%を誇ります。"
+            + (f" {feedback_hint}" if feedback_hint else "")
         ),
         tools=[technical_analysis, fundamental_analysis],
     )

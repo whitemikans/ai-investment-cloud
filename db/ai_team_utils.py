@@ -55,8 +55,10 @@ def init_ai_team_tables() -> None:
                 """
                 CREATE TABLE IF NOT EXISTS agent_feedback (
                     id __ID_COL__,
+                    date TEXT,
                     created_at TEXT NOT NULL,
                     run_id TEXT,
+                    agent_name TEXT,
                     ticker TEXT,
                     ai_recommendation TEXT,
                     human_decision TEXT,
@@ -68,6 +70,15 @@ def init_ai_team_tables() -> None:
                 .replace("__ID_COL__", id_col)
             )
         )
+        # Lightweight migration for existing tables.
+        for ddl in [
+            "ALTER TABLE agent_feedback ADD COLUMN date TEXT",
+            "ALTER TABLE agent_feedback ADD COLUMN agent_name TEXT",
+        ]:
+            try:
+                con.execute(text(ddl))
+            except Exception:
+                pass
         con.execute(
             text(
                 """
