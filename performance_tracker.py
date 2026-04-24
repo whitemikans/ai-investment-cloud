@@ -7,6 +7,7 @@ import pandas as pd
 import yfinance as yf
 from sqlalchemy import text
 
+from db.ai_team_utils import init_ai_team_tables
 from db.models import engine
 
 
@@ -44,11 +45,11 @@ def init_performance_table() -> None:
         con.execute(text(sql))
 
 
-def _safe_read_sql(query: str, params: dict | None = None) -> pd.DataFrame:
+def _safe_read_sql(query: str, params: dict | None = None) -> tuple[pd.DataFrame, str | None]:
     try:
-        return pd.read_sql(text(query), con=engine, params=params or {})
-    except Exception:
-        return pd.DataFrame()
+        return pd.read_sql(text(query), con=engine, params=params or {}), None
+    except Exception as exc:
+        return pd.DataFrame(), str(exc)
 
 
 def _normalize_ticker(raw: str) -> str:
@@ -88,10 +89,10 @@ def _recommend_from_sentiment(sentiment: str) -> str:
     return "hold"
 
 
-def load_base_recommendations(lookback_days: int = 365) -> pd.DataFrame:
+def load_base_recommendations(lookback_days: int = 365) -> tuple[pd.DataFrame, dict]:
     cutoff = (datetime.now() - timedelta(days=max(1, int(lookback_days)))).strftime("%Y-%m-%d")
 
-    feedback = _safe_read_sql(
+    feedback, fb_err = _safe_read_sql(
         """
         SELECT
           COALESCE(date, created_at) AS recommendation_date,
@@ -106,7 +107,7 @@ def load_base_recommendations(lookback_days: int = 365) -> pd.DataFrame:
         {"cutoff": cutoff},
     )
 
-    research = _safe_read_sql(
+    research, rs_err = _safe_read_sql(
         """
         SELECT
           COALESCE(date, created_at) AS recommendation_date,
@@ -140,15 +141,31 @@ def load_base_recommendations(lookback_days: int = 365) -> pd.DataFrame:
 
     frames = [df for df in [feedback, research_expanded] if not df.empty]
     if not frames:
-        return pd.DataFrame(
-            columns=["recommendation_date", "ticker", "source", "ai_recommendation", "human_decision"]
+        return (
+            pd.DataFrame(columns=["recommendation_date", "ticker", "source", "ai_recommendation", "human_decision"]),
+            {
+                "feedback_rows": int(len(feedback)),
+                "research_rows": int(len(research)),
+                "research_expanded_rows": int(len(research_expanded)),
+                "feedback_error": fb_err,
+                "research_error": rs_err,
+            },
         )
 
     base = pd.concat(frames, ignore_index=True)
     base["ticker"] = base["ticker"].map(_normalize_ticker)
     base = base[base["ticker"] != ""].copy()
     base = base.drop_duplicates(subset=["recommendation_date", "ticker", "source", "ai_recommendation"]).reset_index(drop=True)
-    return base
+    return (
+        base,
+        {
+            "feedback_rows": int(len(feedback)),
+            "research_rows": int(len(research)),
+            "research_expanded_rows": int(len(research_expanded)),
+            "feedback_error": fb_err,
+            "research_error": rs_err,
+        },
+    )
 
 
 def _history_for_ticker(ticker: str, start: datetime, end: datetime, cache: dict[str, pd.Series]) -> pd.Series:
@@ -190,9 +207,18 @@ def _forward_return(close: pd.Series, base_date: datetime, days: int) -> float |
 
 def track_recommendation_performance(lookback_days: int = 365) -> dict:
     init_performance_table()
-    base = load_base_recommendations(lookback_days=lookback_days)
+    try:
+        init_ai_team_tables()
+    except Exception:
+        pass
+
+    base, src = load_base_recommendations(lookback_days=lookback_days)
     if base.empty:
-        return {"tracked": 0, "message": "no recommendations"}
+        return {
+            "tracked": 0,
+            "message": "no recommendations",
+            "source_status": src,
+        }
 
     base_dates = pd.to_datetime(base["recommendation_date"], errors="coerce").dropna()
     if base_dates.empty:
@@ -254,7 +280,7 @@ def track_recommendation_performance(lookback_days: int = 365) -> dict:
 
 def load_performance_data(limit: int = 2000) -> pd.DataFrame:
     init_performance_table()
-    return _safe_read_sql(
+    df, _err = _safe_read_sql(
         """
         SELECT *
         FROM agent_recommendation_performance
@@ -263,6 +289,7 @@ def load_performance_data(limit: int = 2000) -> pd.DataFrame:
         """,
         {"n": int(limit)},
     )
+    return df
 
 
 def summarize_recent_accuracy(days: int = 90) -> dict:
