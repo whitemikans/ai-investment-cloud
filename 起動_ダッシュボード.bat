@@ -5,11 +5,20 @@ cd /d "%~dp0"
 
 set "PY_EXE="
 set "PORT="
+set "USE_VENV313=0"
+
+REM Prefer project-local Python venv for #09
+if exist "%~dp0.venv313\Scripts\python.exe" (
+  set "PY_EXE=%~dp0.venv313\Scripts\python.exe"
+  set "USE_VENV313=1"
+)
 
 REM Prefer real Python executable under LocalAppData
-for /d %%D in ("%LocalAppData%\Programs\Python\Python*") do (
-  if exist "%%~fD\python.exe" (
-    set "PY_EXE=%%~fD\python.exe"
+if not defined PY_EXE (
+  for /d %%D in ("%LocalAppData%\Programs\Python\Python*") do (
+    if exist "%%~fD\python.exe" (
+      set "PY_EXE=%%~fD\python.exe"
+    )
   )
 )
 
@@ -38,13 +47,19 @@ if %ERRORLEVEL% neq 0 (
 set "MISS_FILE=%TEMP%\ai_dashboard_missing_modules.txt"
 if exist "%MISS_FILE%" del /q "%MISS_FILE%" >nul 2>nul
 
-%PY_EXE% -c "import importlib.util as u;mods=['streamlit','plotly','yfinance','pandas','numpy','sqlalchemy','feedparser','requests','scipy','google.genai'];miss=[m for m in mods if u.find_spec(m) is None];print(','.join(miss)) if miss else None;raise SystemExit(1 if miss else 0)" > "%MISS_FILE%"
+%PY_EXE% -c "import importlib.util as u;mods=['streamlit','plotly','yfinance','pandas','numpy','sqlalchemy','feedparser','requests','scipy','google.genai','crewai','crewai_tools'];miss=[m for m in mods if u.find_spec(m) is None];print(','.join(miss)) if miss else None;raise SystemExit(1 if miss else 0)" > "%MISS_FILE%"
 
 if %ERRORLEVEL% neq 0 (
   set /p MISSING=<"%MISS_FILE%"
   echo Missing modules: %MISSING%
-  echo Installing dependencies for current user...
-  %PY_EXE% -m pip install --user -r "%~dp0requirements.txt"
+  echo Installing dependencies...
+  if "%USE_VENV313%"=="1" (
+    %PY_EXE% -m pip install -r "%~dp0requirements.txt"
+    %PY_EXE% -m pip install crewai crewai-tools google-genai
+  ) else (
+    %PY_EXE% -m pip install --user -r "%~dp0requirements.txt"
+    %PY_EXE% -m pip install --user crewai crewai-tools google-genai
+  )
   if %ERRORLEVEL% neq 0 (
     echo Failed to install dependencies.
     echo If your network is restricted, run this once on a network that can access PyPI.

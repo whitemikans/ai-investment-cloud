@@ -11,6 +11,7 @@ from sqlalchemy import text
 from agents import create_analyst, create_reporter, create_researcher, create_risk_manager
 from db.ai_team_utils import init_ai_team_tables, save_ai_team_report
 from db.models import engine
+from llm_config import resolve_gemini_api_key
 from news_pipeline import process_news_pipeline
 from tasks import create_analysis_task, create_report_task, create_research_task, create_risk_task
 from tools.analysis_tools import fundamental_analysis, technical_analysis
@@ -27,8 +28,10 @@ except Exception:
 
 
 def _required_env_ok() -> tuple[bool, list[str]]:
-    required = ["GEMINI_API_KEY", "DISCORD_WEBHOOK_URL"]
+    required = ["DISCORD_WEBHOOK_URL"]
     missing = [k for k in required if not (os.getenv(k) or "").strip()]
+    if not resolve_gemini_api_key():
+        missing.append("GEMINI_API_KEY(env or secrets.toml)")
     return len(missing) == 0, missing
 
 
