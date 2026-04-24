@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -19,8 +20,8 @@ except Exception:
 
 
 @tool("ポートフォリオリスクチェック")
-def portfolio_risk_check() -> str:
-    """集中リスク/相関リスク/配分上限をチェックして警告を返します。"""
+def portfolio_risk_check(analysis_recommendations: str = "") -> str:
+    """推奨売買も加味して集中リスク/相関リスク/配分上限/最大DDをチェックします。"""
     df = get_portfolio_df_with_price()
     if df.empty:
         return json.dumps({"risk_score": 0, "warnings": ["ポートフォリオデータなし"]}, ensure_ascii=False)
@@ -31,8 +32,45 @@ def portfolio_risk_check() -> str:
     if total <= 0:
         return json.dumps({"risk_score": 0, "warnings": ["時価総額合計が0"]}, ensure_ascii=False)
     work["weight"] = work["market_value"] / total
+    base_weights = dict(zip(work["stock_code"].astype(str), work["weight"].astype(float)))
 
     warnings: list[str] = []
+    comparison: dict[str, Any] = {}
+
+    # Optional: analyst recommendations input (json string)
+    # Example: [{"ticker":"AAPL","action":"買い"},{"ticker":"MSFT","action":"売り"}]
+    if str(analysis_recommendations or "").strip():
+        try:
+            recs = json.loads(str(analysis_recommendations))
+            if isinstance(recs, dict) and isinstance(recs.get("recommendations"), list):
+                recs = recs.get("recommendations")
+            if not isinstance(recs, list):
+                recs = []
+
+            adjusted = dict(base_weights)
+            for r in recs:
+                if not isinstance(r, dict):
+                    continue
+                t = str(r.get("ticker", "")).strip().upper()
+                if not t:
+                    continue
+                act = str(r.get("action", "")).strip()
+                if t not in adjusted:
+                    adjusted[t] = 0.0
+                if act == "買い":
+                    adjusted[t] += 0.03
+                elif act == "売り":
+                    adjusted[t] = max(0.0, adjusted[t] - 0.03)
+            s = float(sum(adjusted.values()))
+            if s > 0:
+                adjusted = {k: v / s for k, v in adjusted.items()}
+
+            comparison = {
+                "base_top_weight": float(max(base_weights.values()) if base_weights else 0.0),
+                "adjusted_top_weight": float(max(adjusted.values()) if adjusted else 0.0),
+            }
+        except Exception:
+            comparison = {"error": "analysis_recommendations parse failed"}
 
     sector = work.groupby("sector", dropna=False)["weight"].sum().sort_values(ascending=False)
     if not sector.empty and float(sector.iloc[0]) > 0.30:
@@ -66,13 +104,43 @@ def portfolio_risk_check() -> str:
     except Exception:
         pass
 
+    # Estimate max drawdown from 1y daily portfolio return series.
+    max_drawdown_pct = 0.0
+    try:
+        price_1y = yf.download(tickers, period="1y", auto_adjust=True, progress=False)
+        close_1y = price_1y["Close"] if "Close" in price_1y.columns else price_1y
+        if isinstance(close_1y, pd.Series):
+            close_1y = close_1y.to_frame(name=tickers[0])
+        ret_1y = close_1y.pct_change().dropna(how="all")
+        w = pd.Series(base_weights, dtype=float)
+        common = [c for c in ret_1y.columns if c in w.index]
+        if common:
+            w = w.loc[common]
+            w = w / max(float(w.sum()), 1e-12)
+            pf_ret = ret_1y[common].fillna(0.0).dot(w)
+            equity = (1.0 + pf_ret).cumprod()
+            peak = equity.cummax()
+            dd = (equity / peak) - 1.0
+            max_drawdown_pct = float(abs(dd.min()) * 100.0)
+    except Exception:
+        max_drawdown_pct = 0.0
+
     risk_score = max(0, min(100, 85 - len(warnings) * 12))
+    go_no_go = "承認"
+    if risk_score < 60:
+        go_no_go = "却下"
+    elif warnings:
+        go_no_go = "条件付き承認"
+
     return json.dumps(
         {
             "risk_score": risk_score,
             "warnings": warnings or ["重大な集中リスクなし"],
             "top_sector_weight": float(sector.iloc[0]) if not sector.empty else 0.0,
             "top_stock_weight": float(top["weight"]),
+            "estimated_max_drawdown_pct": round(max_drawdown_pct, 2),
+            "go_no_go": go_no_go,
+            "recommendation_comparison": comparison,
         },
         ensure_ascii=False,
     )
@@ -103,4 +171,3 @@ def stress_test(scenario: str = "lehman") -> str:
         },
         ensure_ascii=False,
     )
-

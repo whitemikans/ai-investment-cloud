@@ -58,8 +58,14 @@ def create_analysis_task(analyst: object, research_task: object):
 
 def create_risk_task(risk_manager: object, research_task: object, analysis_task: object):
     return _mk_task(
-        description="推奨売買を反映した場合のリスク変化とストレステスト結果を評価してください。",
-        expected_output="リスク警告、Go/No-Go、推定損失",
+        description=(
+            "アナリストの投資推奨を受け取り、以下の観点でリスク評価を行ってください: "
+            "(1)推奨通りに売買した場合のポートフォリオ全体のリスク変化 "
+            "(2)セクター集中リスクの有無 "
+            "(3)ストレステスト結果（リーマン級暴落時の想定損失） "
+            "(4)最終的なGo/No-Go判定（承認/条件付き承認/却下）"
+        ),
+        expected_output="リスク評価レポート（リスク変化、セクター集中、ストレステスト、Go/No-Go判定）",
         agent=risk_manager,
         context=[research_task, analysis_task],
     )
