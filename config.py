@@ -65,7 +65,7 @@ def get_database_url() -> str:
 
 
 def get_app_password() -> str:
-    raw = get_setting("APP_PASSWORD", "admin123") or "admin123"
+    raw = get_setting("APP_PASSWORD", "") or ""
     # Normalize accidental wrapping quotes from env/secrets, e.g. '"pass"' or "'pass'"
     if len(raw) >= 2 and ((raw[0] == '"' and raw[-1] == '"') or (raw[0] == "'" and raw[-1] == "'")):
         return raw[1:-1].strip()

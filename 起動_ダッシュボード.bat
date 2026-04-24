@@ -4,6 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 set "PY_EXE="
+set "PORT=8501"
 
 REM Prefer real Python executable under LocalAppData
 for /d %%D in ("%LocalAppData%\Programs\Python\Python*") do (
@@ -18,20 +19,20 @@ if not defined PY_EXE (
   if %ERRORLEVEL%==0 set "PY_EXE=python"
 )
 
-REM Fallback to py launcher only if callable
-if not defined PY_EXE (
-  where py >nul 2>nul
-  if %ERRORLEVEL%==0 (
-    py -3 -V >nul 2>nul
-    if %ERRORLEVEL%==0 set "PY_EXE=py -3"
-  )
-)
-
 if not defined PY_EXE (
   echo Python was not found.
   echo Install Python 3.10+ and run this file again.
   pause
   exit /b 1
+)
+
+REM If selected python has no pip, fallback to project shared venv when available
+%PY_EXE% -m pip --version >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+  if exist "D:\Codex\Udemy\ai_investment_dashboard_env\Scripts\python.exe" (
+    "D:\Codex\Udemy\ai_investment_dashboard_env\Scripts\python.exe" -m pip --version >nul 2>nul
+    if %ERRORLEVEL%==0 set "PY_EXE=D:\Codex\Udemy\ai_investment_dashboard_env\Scripts\python.exe"
+  )
 )
 
 set "MISS_FILE=%TEMP%\ai_dashboard_missing_modules.txt"
@@ -52,7 +53,18 @@ if %ERRORLEVEL% neq 0 (
   )
 )
 
+REM If 8501 is already in use, fallback to 8502
+netstat -ano | findstr /r /c:":8501 .*LISTENING" >nul 2>nul
+if %ERRORLEVEL%==0 set "PORT=8502"
+
 echo Starting dashboard...
-%PY_EXE% -m streamlit run "%~dp0app.py"
+echo URL: http://localhost:%PORT%
+echo Python: %PY_EXE%
+%PY_EXE% -m streamlit run "%~dp0app.py" --server.port=%PORT% --server.headless=false --browser.serverAddress=localhost
+if %ERRORLEVEL% neq 0 (
+  echo Streamlit failed to start. See error messages above.
+  pause
+  exit /b %ERRORLEVEL%
+)
 
 endlocal
