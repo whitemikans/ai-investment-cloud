@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from urllib.parse import quote
 
 import requests
@@ -50,21 +51,17 @@ def _ascii_ratio(text: str) -> float:
     return ascii_count / max(1, len(text))
 
 
-def translate_to_japanese(text: str, timeout_sec: int = 6) -> str:
-    """Translate text to Japanese using public Google Translate endpoint.
-
-    Falls back to the original text when translation is unavailable.
-    """
-    src = (text or "").strip()
+@lru_cache(maxsize=4096)
+def _translate_cached(src: str, target_lang: str, timeout_sec: int) -> str:
     if not src:
         return ""
-    if _contains_japanese(src):
+    if target_lang == "ja" and _contains_japanese(src):
         return src
 
     try:
         url = (
             "https://translate.googleapis.com/translate_a/single"
-            f"?client=gtx&sl=auto&tl=ja&dt=t&q={quote(src)}"
+            f"?client=gtx&sl=auto&tl={target_lang}&dt=t&q={quote(src)}"
         )
         resp = requests.get(url, timeout=timeout_sec)
         resp.raise_for_status()
@@ -73,6 +70,18 @@ def translate_to_japanese(text: str, timeout_sec: int = 6) -> str:
         return translated.strip() or src
     except Exception:
         return src
+
+
+def translate_to_japanese(text: str, timeout_sec: int = 4) -> str:
+    """Translate text to Japanese with in-process cache."""
+    src = (text or "").strip()
+    return _translate_cached(src, "ja", int(timeout_sec))
+
+
+def translate_to_english(text: str, timeout_sec: int = 4) -> str:
+    """Translate text to English with in-process cache."""
+    src = (text or "").strip()
+    return _translate_cached(src, "en", int(timeout_sec))
 
 
 def summarize_news(title: str, content: str) -> str:

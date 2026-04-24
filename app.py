@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-from db.db_utils import get_portfolio_df_with_price, init_db
+from db.db_utils import get_portfolio, init_db
 from db.news_utils import init_news_tables
 from utils.auth import ensure_login, render_logout
 from utils.common import apply_global_ui_tweaks, log_event, render_last_data_update
@@ -23,9 +23,81 @@ DB_PATH = PROJECT_ROOT / "investment.db"
 @st.cache_data(ttl=300)
 def load_portfolio_market_df() -> pd.DataFrame:
     try:
-        return get_portfolio_df_with_price()
+        base = get_portfolio()
+        if base.empty:
+            return pd.DataFrame()
+
+        work = base.copy()
+        work["stock_code"] = work["stock_code"].astype(str)
+        work["total_quantity"] = pd.to_numeric(work["total_quantity"], errors="coerce").fillna(0.0)
+        work["total_cost"] = pd.to_numeric(work["total_cost"], errors="coerce").fillna(0.0)
+        prices = fetch_latest_prev_close(tuple(work["stock_code"].tolist()))
+
+        work["current_price"] = work["stock_code"].map(lambda t: prices.get(t, (float("nan"), float("nan")))[0])
+        work["prev_close"] = work["stock_code"].map(lambda t: prices.get(t, (float("nan"), float("nan")))[1])
+        work["market_value"] = work["current_price"] * work["total_quantity"]
+        work["unrealized_pl"] = work["market_value"] - work["total_cost"]
+        work["today_pnl"] = (work["current_price"] - work["prev_close"]) * work["total_quantity"]
+        return work
     except Exception:
         return pd.DataFrame()
+
+
+@st.cache_data(ttl=180)
+def fetch_latest_prev_close(tickers: tuple[str, ...]) -> dict[str, tuple[float, float]]:
+    result: dict[str, tuple[float, float]] = {}
+    if not tickers:
+        return result
+    clean = tuple(sorted({str(t).strip().upper() for t in tickers if str(t).strip()}))
+    if not clean:
+        return result
+
+    try:
+        raw = yf.download(
+            list(clean),
+            period="5d",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+    except Exception:
+        raw = pd.DataFrame()
+
+    if raw is None or raw.empty:
+        return result
+
+    def _pick_close_series(df: pd.DataFrame, ticker: str) -> pd.Series | None:
+        if isinstance(df.columns, pd.MultiIndex):
+            lv0 = set(df.columns.get_level_values(0))
+            lv1 = set(df.columns.get_level_values(1))
+            if ticker in lv0 and "Close" in lv1:
+                try:
+                    return pd.to_numeric(df[(ticker, "Close")], errors="coerce").dropna()
+                except Exception:
+                    pass
+            if "Close" in lv0 and ticker in lv1:
+                try:
+                    return pd.to_numeric(df[("Close", ticker)], errors="coerce").dropna()
+                except Exception:
+                    pass
+            return None
+        if "Close" in df.columns and len(clean) == 1:
+            return pd.to_numeric(df["Close"], errors="coerce").dropna()
+        return None
+
+    for code in clean:
+        try:
+            close = _pick_close_series(raw, code)
+            if close is None or close.empty:
+                continue
+            current = float(close.iloc[-1])
+            prev = float(close.iloc[-2]) if len(close) >= 2 else current
+            result[code] = (current, prev)
+        except Exception:
+            continue
+    return result
 
 
 @st.cache_data(ttl=300)
@@ -43,24 +115,6 @@ def load_news_top3() -> pd.DataFrame:
             return pd.read_sql_query(sql, conn)
     except Exception:
         return pd.DataFrame(columns=["title", "url", "source", "published_at", "summary_ja"])
-
-
-@st.cache_data(ttl=300)
-def calc_today_pnl(positions: tuple[tuple[str, float], ...]) -> float:
-    total = 0.0
-    for code, qty in positions:
-        try:
-            hist = yf.Ticker(code).history(period="5d", interval="1d")
-            if hist is None or hist.empty or len(hist) < 2:
-                continue
-            close = hist["Close"].dropna()
-            if len(close) < 2:
-                continue
-            diff = float(close.iloc[-1] - close.iloc[-2])
-            total += diff * float(qty)
-        except Exception:
-            continue
-    return float(total)
 
 
 def calc_fire_metrics(total_assets: float) -> tuple[float, float]:
@@ -199,15 +253,15 @@ st.markdown("<div class='hero'><h2>🏠 統合ダッシュボード</h2><div>講
 portfolio_df = load_portfolio_market_df()
 portfolio_df = portfolio_df.copy() if isinstance(portfolio_df, pd.DataFrame) else pd.DataFrame()
 if portfolio_df.empty:
-    positions = tuple()
     total_assets = 0.0
+    today_pnl = 0.0
 else:
     portfolio_df["market_value"] = pd.to_numeric(portfolio_df["market_value"], errors="coerce").fillna(0.0)
-    portfolio_df["total_quantity"] = pd.to_numeric(portfolio_df["total_quantity"], errors="coerce").fillna(0.0)
+    if "today_pnl" not in portfolio_df.columns:
+        portfolio_df["today_pnl"] = 0.0
+    portfolio_df["today_pnl"] = pd.to_numeric(portfolio_df["today_pnl"], errors="coerce").fillna(0.0)
     total_assets = float(portfolio_df["market_value"].sum())
-    positions = tuple((str(r["stock_code"]), float(r["total_quantity"])) for _, r in portfolio_df.iterrows())
-
-today_pnl = calc_today_pnl(positions)
+    today_pnl = float(portfolio_df["today_pnl"].sum())
 fire_target, fire_probability = calc_fire_metrics(total_assets)
 opt_score = calc_optimization_score(portfolio_df)
 

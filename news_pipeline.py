@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +13,7 @@ from ai_analyzer import (
     extract_related_stocks,
     infer_sector,
     score_importance,
+    translate_to_english,
     translate_to_japanese,
 )
 from db.news_utils import get_stock_master_tickers, init_news_tables, list_keyword_alerts
@@ -39,6 +41,7 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+@lru_cache(maxsize=2048)
 def _keyword_variants(keyword: str) -> list[str]:
     kw = (keyword or "").strip()
     if not kw:
@@ -50,9 +53,12 @@ def _keyword_variants(keyword: str) -> list[str]:
         variants.add(alias.lower())
 
     # Automatic translation fallback for custom keywords.
-    translated = translate_to_japanese(kw)
-    if translated:
-        variants.add(translated.lower())
+    translated_ja = translate_to_japanese(kw)
+    if translated_ja:
+        variants.add(translated_ja.lower())
+    translated_en = translate_to_english(kw)
+    if translated_en:
+        variants.add(translated_en.lower())
     return [v for v in variants if v]
 
 
@@ -105,6 +111,13 @@ def _upsert_article(conn: sqlite3.Connection, article: dict[str, str]) -> int:
         ),
     )
     return int(cur.lastrowid)
+
+
+def _find_existing_article(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT id, title, COALESCE(summary_ja, '') AS summary_ja, COALESCE(content, '') AS content FROM news_articles WHERE url = ?",
+        (url,),
+    ).fetchone()
 
 
 def _upsert_sentiment(
@@ -169,11 +182,15 @@ def process_news_pipeline(max_articles_per_source: int = 20) -> pd.DataFrame:
     alerts_count = 0
     with _connect() as conn:
         for item in raw_articles:
+            existing = _find_existing_article(conn, item["url"])
             text = f"{item['title']} {item['content']}".strip()
-            text_ja_for_match = translate_to_japanese(text)
-            searchable_text = f"{text}\n{text_ja_for_match}".lower()
-            title_ja = translate_to_japanese(item["title"])
-            summary = build_japanese_summary(title_ja, item["content"])
+            searchable_text = text.lower()
+            if existing and str(existing["content"] or "").strip() == str(item["content"] or "").strip() and str(existing["summary_ja"] or "").strip():
+                title_ja = str(existing["title"] or "").strip() or translate_to_japanese(item["title"])
+                summary = str(existing["summary_ja"] or "").strip()
+            else:
+                title_ja = translate_to_japanese(item["title"])
+                summary = build_japanese_summary(title_ja, item["content"])
             sentiment_score, sentiment_label = analyze_sentiment(text)
             importance = score_importance(text, item["source"])
             related_stocks = extract_related_stocks(text, stock_codes)
