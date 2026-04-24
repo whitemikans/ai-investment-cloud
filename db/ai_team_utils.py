@@ -11,12 +11,16 @@ from .models import engine
 
 
 def init_ai_team_tables() -> None:
+    backend = engine.url.get_backend_name().lower()
+    is_sqlite = backend == "sqlite"
+    id_col = "INTEGER PRIMARY KEY AUTOINCREMENT" if is_sqlite else "BIGSERIAL PRIMARY KEY"
+
     with engine.begin() as con:
         con.execute(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS ai_team_reports (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id __ID_COL__,
                     run_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     risk_level TEXT,
@@ -28,13 +32,14 @@ def init_ai_team_tables() -> None:
                     full_report TEXT
                 )
                 """
+                .replace("__ID_COL__", id_col)
             )
         )
         con.execute(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS ai_team_agent_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id __ID_COL__,
                     run_id TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     agent_name TEXT NOT NULL,
@@ -42,13 +47,14 @@ def init_ai_team_tables() -> None:
                     output_json TEXT
                 )
                 """
+                .replace("__ID_COL__", id_col)
             )
         )
         con.execute(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS agent_feedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id __ID_COL__,
                     created_at TEXT NOT NULL,
                     run_id TEXT,
                     ticker TEXT,
@@ -59,13 +65,14 @@ def init_ai_team_tables() -> None:
                     actual_return_1m REAL
                 )
                 """
+                .replace("__ID_COL__", id_col)
             )
         )
         con.execute(
             text(
                 """
                 CREATE TABLE IF NOT EXISTS agent_research_results (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id __ID_COL__,
                     date TEXT,
                     title TEXT,
                     summary TEXT,
@@ -76,6 +83,7 @@ def init_ai_team_tables() -> None:
                     created_at TEXT NOT NULL
                 )
                 """
+                .replace("__ID_COL__", id_col)
             )
         )
 
