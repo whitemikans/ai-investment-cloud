@@ -338,10 +338,14 @@ def add_dividend(
 
 
 def get_dividends(year: int | None = None) -> pd.DataFrame:
+    backend = engine.url.get_backend_name().lower()
     with get_session() as session:
         q = session.query(Dividend, Stock.company_name).join(Stock, Dividend.stock_code == Stock.stock_code)
         if year is not None:
-            q = q.filter(func.strftime("%Y", Dividend.payment_date) == str(year))
+            if backend == "sqlite":
+                q = q.filter(func.strftime("%Y", Dividend.payment_date) == str(year))
+            else:
+                q = q.filter(func.extract("year", Dividend.payment_date) == int(year))
 
         rows = []
         for div, company_name in q.order_by(Dividend.payment_date.desc(), Dividend.id.desc()).all():
@@ -756,19 +760,35 @@ def get_portfolio_df_with_price() -> pd.DataFrame:
 
 def get_monthly_investment_amount_df() -> pd.DataFrame:
     """Read monthly investment amount summary (buy/sell/net) using pandas.read_sql."""
-    sql = """
-    SELECT
-      strftime('%Y-%m', trade_date) AS month,
-      SUM(CASE WHEN trade_type='買' THEN quantity * price + commission ELSE 0 END) AS buy_amount,
-      SUM(CASE WHEN trade_type='売' THEN quantity * price - commission ELSE 0 END) AS sell_amount,
-      SUM(CASE
-            WHEN trade_type='買' THEN -(quantity * price + commission)
-            ELSE  (quantity * price - commission)
-          END) AS net_cash_flow
-    FROM transactions
-    GROUP BY strftime('%Y-%m', trade_date)
-    ORDER BY month
-    """
+    backend = engine.url.get_backend_name().lower()
+    if backend == "sqlite":
+        sql = """
+        SELECT
+          strftime('%Y-%m', trade_date) AS month,
+          SUM(CASE WHEN trade_type='買' THEN quantity * price + commission ELSE 0 END) AS buy_amount,
+          SUM(CASE WHEN trade_type='売' THEN quantity * price - commission ELSE 0 END) AS sell_amount,
+          SUM(CASE
+                WHEN trade_type='買' THEN -(quantity * price + commission)
+                ELSE  (quantity * price - commission)
+              END) AS net_cash_flow
+        FROM transactions
+        GROUP BY strftime('%Y-%m', trade_date)
+        ORDER BY month
+        """
+    else:
+        sql = """
+        SELECT
+          to_char(trade_date, 'YYYY-MM') AS month,
+          SUM(CASE WHEN trade_type='買' THEN quantity * price + commission ELSE 0 END) AS buy_amount,
+          SUM(CASE WHEN trade_type='売' THEN quantity * price - commission ELSE 0 END) AS sell_amount,
+          SUM(CASE
+                WHEN trade_type='買' THEN -(quantity * price + commission)
+                ELSE  (quantity * price - commission)
+              END) AS net_cash_flow
+        FROM transactions
+        GROUP BY to_char(trade_date, 'YYYY-MM')
+        ORDER BY month
+        """
     return pd.read_sql(text(sql), con=engine)
 
 
