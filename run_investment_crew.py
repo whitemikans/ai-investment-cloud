@@ -7,6 +7,7 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -32,6 +33,13 @@ try:
 except Exception:
     Crew = None  # type: ignore
     Process = None  # type: ignore
+
+
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def _now_jst() -> datetime:
+    return datetime.now(JST)
 
 
 def _required_env_status() -> dict[str, bool]:
@@ -114,7 +122,7 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
 
     lines = [
         "📝 AI投資チーム デイリーレポート",
-        f"日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"日時: {_now_jst().strftime('%Y-%m-%d %H:%M:%S JST')}",
         "",
         "📋 エグゼクティブサマリー（3行）",
         summary_line1,
@@ -138,7 +146,7 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
     full = "\n".join(lines)
 
     return {
-        "run_id": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "run_id": _now_jst().strftime("%Y%m%d_%H%M%S"),
         "risk_level": risk_level,
         "summary": summary,
         "market_overview": market_overview,
@@ -195,7 +203,7 @@ def _auto_save_research_results(limit: int = 50) -> None:
         return
     if df.empty:
         return
-    df["created_at"] = datetime.now().isoformat(timespec="seconds")
+    df["created_at"] = _now_jst().isoformat(timespec="seconds")
     save_to_database("agent_research_results", df.to_json(orient="records", force_ascii=False))
 
 
@@ -264,7 +272,7 @@ def _kickoff_crewai_best_effort() -> None:
 def run_investment_crew() -> dict:
     print("━" * 50)
     print("🚀 AI投資チーム — デイリー分析開始")
-    print(f"   {datetime.now().strftime('%Y年%m月%d日 %H:%M JST')}")
+    print(f"   {_now_jst().strftime('%Y年%m月%d日 %H:%M JST')}")
     print("━" * 50)
 
     try:

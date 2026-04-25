@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from sqlalchemy import text
 
 from .models import engine
+
+
+JST = ZoneInfo("Asia/Tokyo")
 
 
 def _sqlite_has_column(con, table_name: str, column_name: str) -> bool:
@@ -113,7 +117,7 @@ def init_ai_team_tables() -> None:
 def save_ai_team_report(report: dict, agent_outputs: dict[str, dict | str]) -> str:
     init_ai_team_tables()
     run_id = str(report.get("run_id") or uuid.uuid4())
-    now = datetime.now().isoformat(timespec="seconds")
+    now = datetime.now(JST).isoformat(timespec="seconds")
 
     with engine.begin() as con:
         con.execute(
