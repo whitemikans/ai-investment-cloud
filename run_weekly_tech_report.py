@@ -9,7 +9,7 @@ from db.tech_research_utils import get_hype_history, get_latest_tech_papers, sav
 from tools.arxiv_collector import collect_arxiv_papers
 from tools.hype_cycle_generator import generate_hype_cycle
 from tools.paper_analyzer import analyze_papers_for_investment
-from tools.patent_analyzer import build_patent_stats
+from tools.patent_analyzer import build_patent_stats, build_patent_yearly_stats
 from tools.tech_radar import build_tech_radar
 from tools.notification_tools import send_discord_message
 
@@ -24,11 +24,19 @@ def _fmt_line(prefix: str, value: str) -> str:
 def run_weekly_tech_report() -> dict:
     raw = collect_arxiv_papers(max_results_per_theme=10, days_back=21)
     analyzed = analyze_papers_for_investment(raw)
-    from db.tech_research_utils import save_tech_papers, replace_hype_history, replace_patent_stats
+    from db.tech_research_utils import (
+        save_tech_papers,
+        replace_hype_history,
+        replace_patent_stats,
+        replace_patent_yearly,
+    )
 
     save_tech_papers(analyzed)
     replace_hype_history(generate_hype_cycle())
-    replace_patent_stats(build_patent_stats())
+    pat_stats = build_patent_stats()
+    pat_yearly = build_patent_yearly_stats(start_year=2018)
+    replace_patent_stats(pat_stats.drop(columns=["source"], errors="ignore"))
+    replace_patent_yearly(pat_yearly)
 
     latest = get_latest_tech_papers(limit=200)
     radar = build_tech_radar()
@@ -83,4 +91,3 @@ def run_weekly_tech_report() -> dict:
 
 if __name__ == "__main__":
     print(run_weekly_tech_report())
-

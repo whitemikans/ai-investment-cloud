@@ -9,3 +9,5 @@ requests
 psycopg2-binary
 scipy
 google-genai
+pytrends
+networkx

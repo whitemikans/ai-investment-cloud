@@ -1,7 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from xml.etree import ElementTree as ET
 
 import pandas as pd
@@ -70,7 +70,7 @@ def _entry_to_row(entry: ET.Element, theme: str, ns: dict[str, str]) -> dict:
 def collect_arxiv_papers(max_results_per_theme: int = 10, days_back: int = 30) -> pd.DataFrame:
     rows: list[dict] = []
     ns = {"atom": "http://www.w3.org/2005/Atom"}
-    cutoff = datetime.utcnow() - timedelta(days=max(1, int(days_back)))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(days_back)))
 
     for theme, query in THEME_QUERIES.items():
         params = {
@@ -90,10 +90,10 @@ def collect_arxiv_papers(max_results_per_theme: int = 10, days_back: int = 30) -
         for entry in root.findall("atom:entry", ns):
             row = _entry_to_row(entry, theme, ns)
             try:
-                p = pd.to_datetime(row["published_at"], errors="coerce")
+                p = pd.to_datetime(row["published_at"], errors="coerce", utc=True)
                 if pd.isna(p):
                     continue
-                if p.to_pydatetime().replace(tzinfo=None) < cutoff:
+                if p.to_pydatetime() < cutoff:
                     continue
             except Exception:
                 continue
@@ -119,10 +119,13 @@ def collect_arxiv_papers(max_results_per_theme: int = 10, days_back: int = 30) -
     return df
 
 
-@tool("arXiv論文収集")
+@tool("arXiv隲匁枚蜿朱寔")
 def collect_arxiv_papers_tool(max_results_per_theme: str = "10") -> str:
+    """Collect recent arXiv papers by theme and save them to tech_papers table."""
     n = int(float(max_results_per_theme or 10))
     df = collect_arxiv_papers(max_results_per_theme=max(3, min(25, n)))
     inserted = save_tech_papers(df)
     return json.dumps({"rows": int(len(df)), "inserted": int(inserted)}, ensure_ascii=False)
+
+
 
