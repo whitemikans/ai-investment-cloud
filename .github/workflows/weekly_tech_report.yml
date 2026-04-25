@@ -1,0 +1,37 @@
+name: Weekly Technology Report
+
+on:
+  schedule:
+    - cron: "0 22 * * 0" # UTC Sunday 22:00 = JST Monday 07:00
+  workflow_dispatch:
+
+jobs:
+  weekly-tech-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly technology report
+        run: python run_weekly_tech_report.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-tech-report-${{ github.run_number }}
+          path: dashboard_events.log
+          if-no-files-found: ignore
+          retention-days: 30
+

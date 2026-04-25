@@ -80,3 +80,15 @@ def create_report_task(reporter: object, research_task: object, analysis_task: o
         agent=reporter,
         context=[research_task, analysis_task, risk_task],
     )
+
+
+def create_technology_research_task(tech_researcher: object):
+    return _mk_task(
+        description=(
+            "6大技術領域（AI/量子/バイオ/宇宙/エネルギー/ロボティクス）の最新動向を調査してください。"
+            "arXivの最新論文を収集し、投資インパクトが高い論文を特定。"
+            "各技術のハイプサイクル上の位置づけを評価し、投資機会として報告してください。"
+        ),
+        expected_output="技術領域別の注目論文リスト + ハイプサイクル位置 + 投資推奨",
+        agent=tech_researcher,
+    )

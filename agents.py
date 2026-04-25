@@ -6,7 +6,11 @@ from sqlalchemy import text
 from db.models import engine
 
 from tools.analysis_tools import fundamental_analysis, technical_analysis
+from tools.arxiv_collector import collect_arxiv_papers_tool
+from tools.hype_cycle_generator import generate_hype_cycle_tool
 from tools.notification_tools import send_discord_message
+from tools.paper_analyzer import analyze_latest_papers_tool
+from tools.patent_analyzer import build_patent_stats_tool
 from tools.research_tools import fetch_news_from_rss, fetch_stock_data, save_to_database
 from tools.risk_tools import portfolio_risk_check, stress_test
 
@@ -108,4 +112,24 @@ def create_reporter():
             "情報の優先順位付けが得意で、『今日最も重要な3つのこと』を的確に絞り込みます。"
         ),
         tools=[send_discord_message, save_to_database],
+    )
+
+
+def create_technology_researcher():
+    return _mk_agent(
+        role="先端技術リサーチアナリスト",
+        goal="arXiv論文と特許データから投資関連の技術ブレイクスルーを発掘し、投資機会に翻訳する",
+        backstory=(
+            "あなたはMIT Technology Reviewの元編集長で、15年間先端技術の産業応用を取材してきた専門家です。"
+            "科学論文を読み解き、その技術が5年後・10年後にどの産業を変革するかを予測する能力に長けています。"
+            "特に日本の技術力（素材・精密機器・ロボティクス）への深い理解があり、"
+            "海外技術と日本企業の接点を見出すのが得意です。"
+        ),
+        tools=[
+            collect_arxiv_papers_tool,
+            analyze_latest_papers_tool,
+            build_patent_stats_tool,
+            generate_hype_cycle_tool,
+            save_to_database,
+        ],
     )
