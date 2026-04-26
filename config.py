@@ -88,18 +88,18 @@ def get_runtime_name() -> str:
 
 def get_database_url() -> str:
     explicit_cloud_url = get_setting("CLOUD_DATABASE_URL")
+    database_url = get_setting("DATABASE_URL")
     if explicit_cloud_url:
         raw = explicit_cloud_url
-    elif is_streamlit_cloud():
-        raw = (
-            get_setting("DATABASE_URL")
-            or DEFAULT_SQLITE_URL
-        )
     elif os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
-        raw = (
-            get_setting("DATABASE_URL")
-            or DEFAULT_SQLITE_URL
-        )
+        raw = database_url or DEFAULT_SQLITE_URL
+    elif os.name != "nt" and database_url:
+        # Streamlit Community Cloud runs on Linux. If its public env markers are
+        # missing, still prefer DATABASE_URL over the ephemeral SQLite fallback.
+        # Windows local runs keep using SQLite unless LOCAL_DATABASE_URL is set.
+        raw = database_url
+    elif is_streamlit_cloud():
+        raw = database_url or DEFAULT_SQLITE_URL
     else:
         # Priority outside Streamlit Cloud:
         # 1) LOCAL_DATABASE_URL (explicit local override)

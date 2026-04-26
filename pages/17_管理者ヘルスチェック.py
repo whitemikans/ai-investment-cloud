@@ -8,9 +8,11 @@ from pathlib import Path
 import pandas as pd
 import requests
 import streamlit as st
+from sqlalchemy import text
 
 from config import get_database_url, get_setting
 from db.db_utils import init_db
+from db.models import engine
 from db.news_utils import init_news_tables
 from utils.auth import ensure_login
 from utils.common import apply_global_ui_tweaks, render_footer, render_last_data_update
@@ -43,7 +45,11 @@ def _table_count(table: str) -> int:
     db_url = get_database_url()
     sqlite_path = _sqlite_path_from_url(db_url)
     if sqlite_path is None or (not sqlite_path.exists()):
-        return 0
+        try:
+            with engine.connect() as con:
+                return int(con.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one())
+        except Exception:
+            return 0
     with sqlite3.connect(sqlite_path) as con:
         try:
             return int(con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
@@ -55,7 +61,12 @@ def _latest_dt(table: str, column: str) -> str:
     db_url = get_database_url()
     sqlite_path = _sqlite_path_from_url(db_url)
     if sqlite_path is None or (not sqlite_path.exists()):
-        return "-"
+        try:
+            with engine.connect() as con:
+                row = con.execute(text(f"SELECT MAX({column}) FROM {table}")).fetchone()
+                return str(row[0]) if row and row[0] is not None else "-"
+        except Exception:
+            return "-"
     with sqlite3.connect(sqlite_path) as con:
         try:
             row = con.execute(f"SELECT MAX({column}) FROM {table}").fetchone()
@@ -166,4 +177,3 @@ if st.button("Discord通知テスト", use_container_width=True):
         st.warning(msg)
 
 render_footer()
-

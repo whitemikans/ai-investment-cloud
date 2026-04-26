@@ -3,8 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from sqlalchemy import text
 
 from db.db_utils import init_db
+from db.models import engine
 from db.news_utils import get_news_feed_df, get_sector_sentiment_heatmap_df, get_sentiment_trend_df, init_news_tables
 from news_pipeline import process_news_pipeline
 from utils.common import apply_global_ui_tweaks, render_footer, render_last_data_update, touch_last_data_update
@@ -20,6 +22,14 @@ def _sentiment_bar(score: float) -> str:
     return "#9ca3af"
 
 
+def _news_table_count() -> int | None:
+    try:
+        with engine.connect() as con:
+            return int(con.execute(text("SELECT COUNT(*) FROM news_articles")).scalar_one())
+    except Exception:
+        return None
+
+
 st.title("📰 ニュースフィード")
 apply_global_ui_tweaks()
 st.caption("ニュース収集・センチメント分析・重要度判定の結果を表示します。")
@@ -28,6 +38,10 @@ with st.spinner("DB初期化中..."):
     init_db()
     init_news_tables()
 render_last_data_update()
+backend = engine.url.get_backend_name().lower()
+news_total = _news_table_count()
+news_total_label = "-" if news_total is None else f"{news_total:,}"
+st.caption(f"保存先DB: {backend} / news_articles: {news_total_label}")
 
 col_run, col_space = st.columns([1, 3])
 with col_run:
@@ -119,4 +133,3 @@ for row in df.head(200).itertuples(index=False):
             st.caption(f"🏷 関連銘柄: {tags}")
 
 render_footer()
-
