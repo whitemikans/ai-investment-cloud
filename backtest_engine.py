@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
 from typing import Callable
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from sqlalchemy import text
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-DB_PATH = PROJECT_ROOT / "investment.db"
+from db.models import engine
 
 
 @dataclass
@@ -34,11 +32,13 @@ class BacktestResult:
 
 
 def ensure_backtest_tables() -> None:
-    with sqlite3.connect(DB_PATH) as con:
+    id_col = "INTEGER PRIMARY KEY AUTOINCREMENT" if engine.url.get_backend_name().lower() == "sqlite" else "BIGSERIAL PRIMARY KEY"
+    with engine.begin() as con:
         con.execute(
-            """
+            text(
+                """
             CREATE TABLE IF NOT EXISTS backtest_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id __ID_COL__,
                 strategy_name TEXT NOT NULL,
                 ticker TEXT NOT NULL,
                 start_date DATE NOT NULL,
@@ -54,8 +54,9 @@ def ensure_backtest_tables() -> None:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
+                .replace("__ID_COL__", id_col)
+            )
         )
-        con.commit()
 
 
 def fetch_price_data(ticker: str, start: date, end: date) -> pd.DataFrame:
@@ -391,68 +392,75 @@ def compare_strategies(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
 def save_backtest_result(result: BacktestResult) -> int:
     ensure_backtest_tables()
-    with sqlite3.connect(DB_PATH) as con:
-        cur = con.execute(
-            """
+    sql = """
             INSERT INTO backtest_results(
                 strategy_name, ticker, start_date, end_date, params_json,
                 total_return_pct, buy_hold_return_pct, max_drawdown_pct, win_rate_pct,
                 sharpe_ratio, profit_factor, trades, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                result.strategy_name,
-                result.ticker,
-                result.start_date,
-                result.end_date,
-                json.dumps(result.params, ensure_ascii=False),
-                result.total_return_pct,
-                result.buy_hold_return_pct,
-                result.max_drawdown_pct,
-                result.win_rate_pct,
-                result.sharpe_ratio,
-                result.profit_factor,
-                result.trades,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
-        )
-        con.commit()
-        return int(cur.lastrowid)
+            VALUES (:strategy_name, :ticker, :start_date, :end_date, :params_json,
+                    :total_return_pct, :buy_hold_return_pct, :max_drawdown_pct, :win_rate_pct,
+                    :sharpe_ratio, :profit_factor, :trades, :created_at)
+            """
+    if engine.url.get_backend_name().lower() != "sqlite":
+        sql += " RETURNING id"
+    params = {
+        "strategy_name": result.strategy_name,
+        "ticker": result.ticker,
+        "start_date": result.start_date,
+        "end_date": result.end_date,
+        "params_json": json.dumps(result.params, ensure_ascii=False),
+        "total_return_pct": result.total_return_pct,
+        "buy_hold_return_pct": result.buy_hold_return_pct,
+        "max_drawdown_pct": result.max_drawdown_pct,
+        "win_rate_pct": result.win_rate_pct,
+        "sharpe_ratio": result.sharpe_ratio,
+        "profit_factor": result.profit_factor,
+        "trades": result.trades,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    with engine.begin() as con:
+        res = con.execute(text(sql), params)
+        if engine.url.get_backend_name().lower() != "sqlite":
+            return int(res.scalar_one())
+        return int(con.execute(text("SELECT last_insert_rowid()")).scalar_one())
 
 
 def save_comparison_results(ticker: str, start_date: str, end_date: str, df: pd.DataFrame) -> int:
     ensure_backtest_tables()
     inserted = 0
-    with sqlite3.connect(DB_PATH) as con:
+    with engine.begin() as con:
         for _, row in df.iterrows():
             con.execute(
-                """
+                text(
+                    """
                 INSERT INTO backtest_results(
                     strategy_name, ticker, start_date, end_date, params_json,
                     total_return_pct, buy_hold_return_pct, max_drawdown_pct, win_rate_pct,
                     sharpe_ratio, profit_factor, trades, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(row["strategy_name"]),
-                    ticker,
-                    start_date,
-                    end_date,
-                    str(row.get("params_json", "{}")),
-                    float(row["total_return_pct"]),
-                    float(row["buy_hold_return_pct"]),
-                    float(row["max_drawdown_pct"]),
-                    float(row["win_rate_pct"]),
-                    float(row["sharpe_ratio"]),
-                    float(row["profit_factor"]),
-                    int(row["trades"]),
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                VALUES (:strategy_name, :ticker, :start_date, :end_date, :params_json,
+                        :total_return_pct, :buy_hold_return_pct, :max_drawdown_pct, :win_rate_pct,
+                        :sharpe_ratio, :profit_factor, :trades, :created_at)
+                """
                 ),
+                {
+                    "strategy_name": str(row["strategy_name"]),
+                    "ticker": ticker,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "params_json": str(row.get("params_json", "{}")),
+                    "total_return_pct": float(row["total_return_pct"]),
+                    "buy_hold_return_pct": float(row["buy_hold_return_pct"]),
+                    "max_drawdown_pct": float(row["max_drawdown_pct"]),
+                    "win_rate_pct": float(row["win_rate_pct"]),
+                    "sharpe_ratio": float(row["sharpe_ratio"]),
+                    "profit_factor": float(row["profit_factor"]),
+                    "trades": int(row["trades"]),
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                },
             )
             inserted += 1
-        con.commit()
     return inserted
 
 
@@ -464,19 +472,19 @@ def get_backtest_history(
 ) -> pd.DataFrame:
     ensure_backtest_tables()
     where = ["1=1"]
-    params: list[object] = []
+    params: dict[str, object] = {}
     if strategy_name and strategy_name != "すべて":
-        where.append("strategy_name = ?")
-        params.append(strategy_name)
+        where.append("strategy_name = :strategy_name")
+        params["strategy_name"] = strategy_name
     if ticker and ticker != "すべて":
-        where.append("ticker = ?")
-        params.append(ticker.upper())
+        where.append("ticker = :ticker")
+        params["ticker"] = ticker.upper()
     if date_from:
-        where.append("created_at >= ?")
-        params.append(date_from)
+        where.append("created_at >= :date_from")
+        params["date_from"] = date_from
     if date_to:
-        where.append("created_at <= ?")
-        params.append(date_to)
+        where.append("created_at <= :date_to")
+        params["date_to"] = date_to
 
     sql = f"""
     SELECT id, strategy_name, ticker, start_date, end_date, params_json,
@@ -486,8 +494,7 @@ def get_backtest_history(
     WHERE {" AND ".join(where)}
     ORDER BY id DESC
     """
-    with sqlite3.connect(DB_PATH) as con:
-        return pd.read_sql_query(sql, con, params=params)
+    return pd.read_sql(text(sql), con=engine, params=params)
 
 
 def build_ai_strategy_report(compare_df: pd.DataFrame) -> str:

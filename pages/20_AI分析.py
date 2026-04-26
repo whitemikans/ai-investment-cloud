@@ -1,35 +1,30 @@
 ﻿from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy import text
 
 from ai_financial_advisor import generate_financial_advice
 from ai_portfolio_advisor import generate_portfolio_diagnosis
 from db.db_utils import get_portfolio_df_with_price
+from db.models import engine
+from db.news_utils import init_news_tables
 from utils.common import apply_global_ui_tweaks, render_footer
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = PROJECT_ROOT / "investment.db"
 
 
 @st.cache_data(ttl=300)
 def load_news_headline_df(limit: int = 5) -> pd.DataFrame:
-    if not DB_PATH.exists():
-        return pd.DataFrame(columns=["title", "summary_ja", "published_at"])
-    sql = f"""
+    sql = """
     SELECT title, COALESCE(summary_ja, '') AS summary_ja, published_at
     FROM news_articles
     ORDER BY published_at DESC, id DESC
-    LIMIT {int(limit)}
+    LIMIT :limit_n
     """
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            return pd.read_sql_query(sql, conn)
+        init_news_tables()
+        return pd.read_sql(text(sql), con=engine, params={"limit_n": int(limit)})
     except Exception:
         return pd.DataFrame(columns=["title", "summary_ja", "published_at"])
 

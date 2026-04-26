@@ -1,23 +1,19 @@
 ﻿from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
+from sqlalchemy import text
 
 from db.db_utils import get_portfolio, init_db
+from db.models import engine
 from db.news_utils import init_news_tables
 from utils.auth import ensure_login, render_logout
 from utils.common import apply_global_ui_tweaks, log_event, render_last_data_update
-
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-DB_PATH = PROJECT_ROOT / "investment.db"
 
 
 @st.cache_data(ttl=300)
@@ -102,8 +98,6 @@ def fetch_latest_prev_close(tickers: tuple[str, ...]) -> dict[str, tuple[float, 
 
 @st.cache_data(ttl=300)
 def load_news_top3() -> pd.DataFrame:
-    if not DB_PATH.exists():
-        return pd.DataFrame(columns=["title", "url", "source", "published_at", "summary_ja"])
     sql = """
     SELECT title, url, source, published_at, COALESCE(summary_ja, '') AS summary_ja
     FROM news_articles
@@ -111,8 +105,8 @@ def load_news_top3() -> pd.DataFrame:
     LIMIT 3
     """
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            return pd.read_sql_query(sql, conn)
+        init_news_tables()
+        return pd.read_sql(text(sql), con=engine)
     except Exception:
         return pd.DataFrame(columns=["title", "url", "source", "published_at", "summary_ja"])
 

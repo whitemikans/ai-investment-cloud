@@ -85,14 +85,20 @@ def get_database_url() -> str:
             or get_setting("DATABASE_URL")
             or DEFAULT_SQLITE_URL
         )
+    elif os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
+        raw = (
+            get_setting("CLOUD_DATABASE_URL")
+            or get_setting("DATABASE_URL")
+            or DEFAULT_SQLITE_URL
+        )
     else:
         # Priority outside Streamlit Cloud:
         # 1) LOCAL_DATABASE_URL (explicit local override)
-        # 2) DATABASE_URL (CI/GitHub Actions/remote DB)
-        # 3) local sqlite fallback
+        # 2) local sqlite fallback
+        # DATABASE_URL is intentionally ignored locally so a shell env var for
+        # Supabase does not make local scripts/pages write to cloud data.
         raw = (
             get_setting("LOCAL_DATABASE_URL")
-            or get_setting("DATABASE_URL")
             or DEFAULT_SQLITE_URL
         )
     # Supabase/Heroku style URL compatibility for SQLAlchemy

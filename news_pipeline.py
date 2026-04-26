@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import text
 
 from ai_analyzer import (
     analyze_sentiment,
@@ -17,6 +18,7 @@ from ai_analyzer import (
     translate_to_japanese,
 )
 from db.news_utils import get_stock_master_tickers, init_news_tables, list_keyword_alerts
+from db.models import engine
 from rss_reader import fetch_rss_news
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -39,6 +41,10 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _is_sqlite() -> bool:
+    return engine.url.get_backend_name().lower() == "sqlite"
 
 
 @lru_cache(maxsize=2048)
@@ -167,6 +173,118 @@ def _insert_alert(conn: sqlite3.Connection, article_id: int, hit_keywords: list[
     )
 
 
+def _find_existing_article_sa(conn, url: str):
+    return conn.execute(
+        text(
+            """
+            SELECT id, title, COALESCE(summary_ja, '') AS summary_ja, COALESCE(content, '') AS content
+            FROM news_articles
+            WHERE url = :url
+            """
+        ),
+        {"url": url},
+    ).mappings().first()
+
+
+def _upsert_article_sa(conn, article: dict[str, str]) -> int:
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = conn.execute(text("SELECT id FROM news_articles WHERE url = :url"), {"url": article["url"]}).mappings().first()
+    if row:
+        article_id = int(row["id"])
+        conn.execute(
+            text(
+                """
+                UPDATE news_articles
+                SET title = :title, source = :source, published_at = :published_at,
+                    summary_ja = :summary_ja, content = :content, updated_at = :updated_at
+                WHERE id = :id
+                """
+            ),
+            {
+                "title": article["title"],
+                "source": article["source"],
+                "published_at": article["published_at"],
+                "summary_ja": article["summary_ja"],
+                "content": article["content"],
+                "updated_at": now,
+                "id": article_id,
+            },
+        )
+        return article_id
+
+    new_id = conn.execute(
+        text(
+            """
+            INSERT INTO news_articles(title, url, source, published_at, summary_ja, content, created_at, updated_at)
+            VALUES (:title, :url, :source, :published_at, :summary_ja, :content, :created_at, :updated_at)
+            RETURNING id
+            """
+        ),
+        {
+            "title": article["title"],
+            "url": article["url"],
+            "source": article["source"],
+            "published_at": article["published_at"],
+            "summary_ja": article["summary_ja"],
+            "content": article["content"],
+            "created_at": now,
+            "updated_at": now,
+        },
+    ).scalar_one()
+    return int(new_id)
+
+
+def _upsert_sentiment_sa(
+    conn,
+    article_id: int,
+    sentiment_score: float,
+    sentiment_label: str,
+    importance_score: int,
+    related_stocks: list[str],
+    sector: str,
+) -> None:
+    conn.execute(text("DELETE FROM news_sentiments WHERE article_id = :article_id"), {"article_id": article_id})
+    conn.execute(
+        text(
+            """
+            INSERT INTO news_sentiments(article_id, sentiment_score, sentiment_label, importance_score, related_stocks, sector, analyzed_at)
+            VALUES (:article_id, :sentiment_score, :sentiment_label, :importance_score, :related_stocks, :sector, :analyzed_at)
+            """
+        ),
+        {
+            "article_id": article_id,
+            "sentiment_score": sentiment_score,
+            "sentiment_label": sentiment_label,
+            "importance_score": importance_score,
+            "related_stocks": ",".join(related_stocks),
+            "sector": sector,
+            "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        },
+    )
+
+
+def _insert_alert_sa(conn, article_id: int, hit_keywords: list[str], importance_score: int) -> None:
+    if not hit_keywords and importance_score < 4:
+        return
+    alert_type = "keyword" if hit_keywords else "high_importance"
+    message = f"important news detected: importance={importance_score}, keywords={','.join(hit_keywords) if hit_keywords else '-'}"
+    conn.execute(
+        text(
+            """
+            INSERT INTO alerts(article_id, alert_type, message, hit_keywords, created_at)
+            VALUES (:article_id, :alert_type, :message, :hit_keywords, :created_at)
+            """
+        ),
+        {
+            "article_id": article_id,
+            "alert_type": alert_type,
+            "message": message,
+            "hit_keywords": ",".join(hit_keywords),
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        },
+    )
+
+
 def process_news_pipeline(max_articles_per_source: int = 20) -> pd.DataFrame:
     init_news_tables()
     stock_codes = get_stock_master_tickers()
@@ -180,6 +298,67 @@ def process_news_pipeline(max_articles_per_source: int = 20) -> pd.DataFrame:
     processed = 0
     inserted_or_updated = 0
     alerts_count = 0
+
+    if not _is_sqlite():
+        with engine.begin() as conn:
+            for item in raw_articles:
+                existing = _find_existing_article_sa(conn, item["url"])
+                text_src = f"{item['title']} {item['content']}".strip()
+                searchable_text = text_src.lower()
+                if existing and str(existing["content"] or "").strip() == str(item["content"] or "").strip() and str(existing["summary_ja"] or "").strip():
+                    title_ja = str(existing["title"] or "").strip() or translate_to_japanese(item["title"])
+                    summary = str(existing["summary_ja"] or "").strip()
+                else:
+                    title_ja = translate_to_japanese(item["title"])
+                    summary = build_japanese_summary(title_ja, item["content"])
+                sentiment_score, sentiment_label = analyze_sentiment(text_src)
+                importance = score_importance(text_src, item["source"])
+                related_stocks = extract_related_stocks(text_src, stock_codes)
+                sector = infer_sector(text_src)
+
+                hit_keywords = _find_hit_keywords(active_keywords, searchable_text)
+                if hit_keywords:
+                    importance = min(5, importance + 1)
+
+                article_id = _upsert_article_sa(
+                    conn,
+                    {
+                        "title": title_ja,
+                        "url": item["url"],
+                        "source": item["source"],
+                        "published_at": item["published_at"],
+                        "summary_ja": summary,
+                        "content": item["content"],
+                    },
+                )
+                _upsert_sentiment_sa(
+                    conn,
+                    article_id=article_id,
+                    sentiment_score=sentiment_score,
+                    sentiment_label=sentiment_label,
+                    importance_score=importance,
+                    related_stocks=related_stocks,
+                    sector=sector,
+                )
+                before = int(conn.execute(text("SELECT COUNT(*) FROM alerts")).scalar_one())
+                _insert_alert_sa(conn, article_id=article_id, hit_keywords=hit_keywords, importance_score=importance)
+                after = int(conn.execute(text("SELECT COUNT(*) FROM alerts")).scalar_one())
+                if after > before:
+                    alerts_count += 1
+                processed += 1
+                inserted_or_updated += 1
+        return pd.DataFrame(
+            [
+                {
+                    "success": True,
+                    "message": "ニュース処理が完了しました。",
+                    "processed": processed,
+                    "upserted": inserted_or_updated,
+                    "alerts": alerts_count,
+                }
+            ]
+        )
+
     with _connect() as conn:
         for item in raw_articles:
             existing = _find_existing_article(conn, item["url"])
