@@ -68,8 +68,16 @@ def is_streamlit_cloud() -> bool:
     sharing_mode = os.getenv("STREAMLIT_SHARING_MODE", "").strip().lower()
     if sharing_mode in {"streamlit-app", "sharing"}:
         return True
+    runtime_env = os.getenv("STREAMLIT_RUNTIME_ENV", "").strip().lower()
+    if runtime_env in {"cloud", "streamlit_cloud", "streamlit-cloud"}:
+        return True
     explicit_flag = os.getenv("IS_STREAMLIT_CLOUD", "").strip().lower()
     if explicit_flag in {"1", "true", "yes", "on"}:
+        return True
+    # Streamlit Community Cloud has changed/omitted public env markers across
+    # runtime versions. These path/user markers are stable enough to prevent
+    # accidental writes to the ephemeral SQLite file after reboot.
+    if Path("/mount/src").exists() and os.getenv("HOME", "").replace("\\", "/") == "/home/adminuser":
         return True
     return False
 
@@ -79,16 +87,17 @@ def get_runtime_name() -> str:
 
 
 def get_database_url() -> str:
-    if is_streamlit_cloud():
+    explicit_cloud_url = get_setting("CLOUD_DATABASE_URL")
+    if explicit_cloud_url:
+        raw = explicit_cloud_url
+    elif is_streamlit_cloud():
         raw = (
-            get_setting("CLOUD_DATABASE_URL")
-            or get_setting("DATABASE_URL")
+            get_setting("DATABASE_URL")
             or DEFAULT_SQLITE_URL
         )
     elif os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
         raw = (
-            get_setting("CLOUD_DATABASE_URL")
-            or get_setting("DATABASE_URL")
+            get_setting("DATABASE_URL")
             or DEFAULT_SQLITE_URL
         )
     else:
