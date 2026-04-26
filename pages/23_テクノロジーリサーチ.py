@@ -88,43 +88,65 @@ def _translate_text_ja(text: str) -> str:
 
 with st.sidebar:
     st.subheader("データ更新")
+    fast_collect = st.checkbox("高速モード（推奨）", value=True, help="Gemini一括分析、Google Trends、Lens特許APIを省略して短時間で更新します。")
+    use_gemini_collect = st.checkbox("Geminiで論文を詳細分析", value=False, disabled=fast_collect)
+    use_live_patents = st.checkbox("Lens特許APIを使う", value=False, disabled=fast_collect)
+    use_google_trends = st.checkbox("Google Trendsを使う", value=False, disabled=fast_collect)
     if st.button("最新データを収集", use_container_width=True, type="primary"):
-        with st.spinner("データ収集中..."):
-            from db.tech_research_utils import (
-                save_tech_papers,
-                replace_hype_history,
-                replace_patent_stats,
-                replace_patent_yearly,
-            )
+        from db.tech_research_utils import (
+            save_tech_papers,
+            replace_hype_history,
+            replace_patent_stats,
+            replace_patent_yearly,
+        )
 
-            analyzed = pd.DataFrame()
-            papers_saved = 0
-            hype_saved = 0
-            patent_saved = 0
+        analyzed = pd.DataFrame()
+        papers_saved = 0
+        hype_saved = 0
+        patent_saved = 0
+        max_results = 5 if fast_collect else 10
+        max_analyze = 18 if fast_collect else 60
+        gemini_enabled = bool(use_gemini_collect and not fast_collect)
+        live_patents_enabled = bool(use_live_patents and not fast_collect)
+        trends_enabled = bool(use_google_trends and not fast_collect)
 
+        with st.status("データ収集を開始しました", expanded=True) as status:
             # Collect papers (best-effort)
             try:
-                raw = collect_arxiv_papers(max_results_per_theme=10, days_back=45)
-                analyzed = analyze_papers_for_investment(raw)
+                st.write("1/3 論文データを収集中...")
+                raw = collect_arxiv_papers(max_results_per_theme=max_results, days_back=45)
+                st.write(f"論文 {len(raw)} 件を取得。投資インパクトを分析中...")
+                analyzed = analyze_papers_for_investment(
+                    raw,
+                    max_items=max_analyze,
+                    sleep_seconds=0.0 if fast_collect else 1.0,
+                    use_gemini=gemini_enabled,
+                )
                 papers_saved = int(save_tech_papers(analyzed))
+                st.write(f"論文データ保存: {papers_saved} 件")
             except Exception as e:
                 st.warning(f"論文データの収集に失敗しました: {e}")
 
             # Build hype cycle (best-effort)
             try:
-                hype_saved = int(replace_hype_history(generate_hype_cycle()))
+                st.write("2/3 ハイプサイクルを更新中...")
+                hype_saved = int(replace_hype_history(generate_hype_cycle(use_google_trends=trends_enabled)))
+                st.write(f"ハイプサイクル保存: {hype_saved} 件")
             except Exception as e:
                 st.warning(f"ハイプサイクル生成に失敗しました: {e}")
 
             # Build patent data (best-effort)
             try:
-                patent_stats_df = build_patent_stats()
-                patent_yearly_df = build_patent_yearly_stats(start_year=2018)
+                st.write("3/3 特許データを更新中...")
+                patent_stats_df = build_patent_stats(use_live=live_patents_enabled)
+                patent_yearly_df = build_patent_yearly_stats(start_year=2018, use_live=live_patents_enabled)
                 patent_saved = int(replace_patent_stats(patent_stats_df.drop(columns=["source"], errors="ignore")))
                 replace_patent_yearly(patent_yearly_df)
+                st.write(f"特許データ保存: {patent_saved} 件")
             except Exception as e:
                 st.warning(f"特許データの生成に失敗しました: {e}")
 
+            status.update(label="データ収集が完了しました", state="complete", expanded=False)
         st.success(f"更新完了: papers={papers_saved}, hype={hype_saved}, patents={patent_saved}")
         st.rerun()
 

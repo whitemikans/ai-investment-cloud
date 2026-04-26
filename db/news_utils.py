@@ -50,6 +50,16 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, column_def: str) -> None:
+    if column_name not in _table_columns(conn, table_name):
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
+
+
 def init_news_tables() -> None:
     with _connect() as conn:
         conn.execute(
@@ -126,6 +136,26 @@ def init_news_tables() -> None:
             )
             """
         )
+        # Existing course databases may have older versions of these tables.
+        # CREATE TABLE IF NOT EXISTS does not add missing columns, so keep this
+        # lightweight migration here to prevent sqlite3.OperationalError on pages.
+        _ensure_column(conn, "news_articles", "summary_ja", "TEXT")
+        _ensure_column(conn, "news_articles", "content", "TEXT")
+        _ensure_column(conn, "news_articles", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
+        _ensure_column(conn, "news_articles", "updated_at", "DATETIME")
+        _ensure_column(conn, "news_sentiments", "sentiment_score", "REAL")
+        _ensure_column(conn, "news_sentiments", "sentiment_label", "TEXT")
+        _ensure_column(conn, "news_sentiments", "importance_score", "INTEGER")
+        _ensure_column(conn, "news_sentiments", "related_stocks", "TEXT")
+        _ensure_column(conn, "news_sentiments", "sector", "TEXT")
+        _ensure_column(conn, "news_sentiments", "analyzed_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
+        _ensure_column(conn, "alerts", "alert_type", "TEXT")
+        _ensure_column(conn, "alerts", "message", "TEXT")
+        _ensure_column(conn, "alerts", "hit_keywords", "TEXT")
+        _ensure_column(conn, "alerts", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
+        _ensure_column(conn, "keyword_alerts", "category", "TEXT DEFAULT '一般'")
+        _ensure_column(conn, "keyword_alerts", "is_active", "INTEGER NOT NULL DEFAULT 1")
+        _ensure_column(conn, "keyword_alerts", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP")
         for code, name, sector, market in DEFAULT_STOCK_MASTER:
             conn.execute(
                 """

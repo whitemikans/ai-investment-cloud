@@ -191,11 +191,11 @@ def _phase_from_index(index_value: float, slope: float, prev_slope: float, rule:
     return "①黎明期"
 
 
-def generate_hype_cycle(months: int = 36) -> pd.DataFrame:
+def generate_hype_cycle(months: int = 36, use_google_trends: bool = True) -> pd.DataFrame:
     """Generate monthly data-driven hype index and phase per technology theme."""
     paper_df = get_paper_trends(months=max(12, int(months)))
     news_df = _news_monthly_counts(months=max(12, int(months)))
-    search_df = _google_trends_monthly(months=max(12, int(months)))
+    search_df = _google_trends_monthly(months=max(12, int(months))) if use_google_trends else pd.DataFrame()
     if search_df.empty:
         search_df = _fallback_search_from_papers(paper_df)
 
@@ -334,4 +334,3 @@ def generate_hype_cycle_tool() -> str:
     df = generate_hype_cycle(months=36)
     saved = replace_hype_history(df)
     return json.dumps({"rows": int(len(df)), "saved": int(saved)}, ensure_ascii=False)
-
