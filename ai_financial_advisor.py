@@ -3,8 +3,52 @@
 import json
 import os
 from datetime import datetime
+from typing import Any
 
 from config import get_setting
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert pandas/numpy/NaN values into JSON-serializable plain Python values."""
+    try:
+        import math
+
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+    except Exception:
+        pass
+    try:
+        import numpy as np
+
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            v = float(value)
+            return None if not np.isfinite(v) else v
+        if isinstance(value, np.bool_):
+            return bool(value)
+    except Exception:
+        pass
+    try:
+        import pandas as pd
+
+        if value is pd.NA or value is pd.NaT:
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.isoformat()
+        if isinstance(value, pd.Series):
+            return [_json_safe(v) for v in value.tolist()]
+        if isinstance(value, pd.DataFrame):
+            return [_json_safe(r) for r in value.to_dict(orient="records")]
+    except Exception:
+        pass
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def _local_advice(data: dict) -> str:
@@ -61,7 +105,7 @@ def _build_prompt(data: dict) -> tuple[str, str]:
 次のデータを分析して、以下の形式で日本語レポートを返してください。
 
 【データJSON】
-{json.dumps(data, ensure_ascii=False, indent=2)}
+{json.dumps(_json_safe(data), ensure_ascii=False, indent=2, default=str)}
 
 【出力形式】
 ① 現状評価（100点満点）
@@ -77,6 +121,7 @@ def _build_prompt(data: dict) -> tuple[str, str]:
 
 
 def generate_financial_advice(data: dict) -> str:
+    data = _json_safe(data)
     api_key = (get_setting("GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")).strip()
     if not api_key:
         return "GEMINI_API_KEY が未設定のため、AI診断を実行できません。"
@@ -114,6 +159,7 @@ def generate_financial_advice(data: dict) -> str:
 
 def generate_whatif_comparison_comment(compare_rows: list[dict]) -> str:
     """Generate short AI comment for what-if comparison table."""
+    compare_rows = _json_safe(compare_rows)
     if not compare_rows:
         return "比較データがないためコメントを生成できません。"
 
@@ -150,7 +196,7 @@ def generate_whatif_comparison_comment(compare_rows: list[dict]) -> str:
     user_prompt = f"""
 以下のWhat-If比較データを分析してコメントしてください。
 
-{json.dumps(compare_rows, ensure_ascii=False, indent=2)}
+{json.dumps(compare_rows, ensure_ascii=False, indent=2, default=str)}
 
 出力要件:
 - 最も改善効果が高いシナリオ

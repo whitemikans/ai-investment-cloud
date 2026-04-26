@@ -603,7 +603,12 @@ with tabs[4]:
             st.warning("先に『シミュレーション実行』を押してください。")
         else:
             with st.spinner("AIが診断中..."):
-                st.session_state["life_ai_report"] = generate_financial_advice(plan_payload)
+                try:
+                    st.session_state["life_ai_report"] = generate_financial_advice(plan_payload)
+                except TypeError as exc:
+                    st.session_state["life_ai_report"] = f"AI診断データの形式エラーです。入力値をJSON化できませんでした: {exc}"
+                except Exception as exc:
+                    st.session_state["life_ai_report"] = f"AI診断の実行中にエラーが発生しました: {exc}"
 
     st.write(st.session_state.get("life_ai_report") or "AI診断は未実行です。")
 
