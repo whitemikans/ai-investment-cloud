@@ -18,6 +18,53 @@ STOPWORDS = {
     "via", "new", "novel", "large", "small", "multi", "single", "data", "model", "models", "system", "systems",
     "learning", "deep", "neural", "network", "networks", "machine", "language", "framework", "frameworks",
     "arxiv", "preprint", "research", "application", "applications", "performance", "efficient", "improving",
+    "show", "shows", "shown", "propose", "proposed", "present", "presents", "provide", "provides", "paper",
+    "task", "tasks", "benchmark", "benchmarks", "evaluation", "evaluate", "training", "trained", "test", "tests",
+    "result", "results", "effect", "effects", "different", "various", "high", "low", "real", "time", "problem",
+    "problems", "solution", "solutions", "process", "processes", "information", "knowledge", "human", "users",
+    "user", "used", "use", "can", "may", "also", "between", "through", "across", "within", "without", "such",
+    "state", "art", "state-of-the-art", "first", "second", "order", "number", "quality", "better", "robust",
+    "robustness", "general", "specific", "multiple", "several", "many", "more", "most", "less", "important",
+}
+
+TECH_TERMS = {
+    "ai", "agi", "llm", "llms", "agent", "agents", "agentic", "rag", "transformer", "transformers",
+    "diffusion", "multimodal", "vision", "inference", "alignment", "reasoning", "robot", "robots",
+    "robotic", "robotics", "autonomous", "embodied", "gpu", "chip", "semiconductor", "accelerator",
+    "quantum", "qubit", "qubits", "annealing", "superconducting", "photonic", "ion", "ions", "error",
+    "correction", "cryptography", "encryption", "battery", "batteries", "solid-state", "solid", "state",
+    "lithium", "sodium", "anode", "cathode", "electrolyte", "perovskite", "solar", "photovoltaic",
+    "fusion", "plasma", "reactor", "tokamak", "renewable", "hydrogen", "carbon", "capture", "energy",
+    "biotech", "biology", "drug", "drugs", "discovery", "protein", "proteins", "genome", "genomics",
+    "crispr", "rna", "mrna", "therapy", "clinical", "molecule", "molecular", "cell", "cells",
+    "satellite", "satellites", "rocket", "space", "orbital", "launch", "propulsion", "earth",
+    "manufacturing", "material", "materials", "sensor", "sensors", "lidar", "edge", "cloud",
+}
+
+TECH_SINGLE_TERMS = {
+    "ai", "agi", "llm", "llms", "rag", "transformer", "transformers", "diffusion", "multimodal",
+    "inference", "alignment", "reasoning", "robot", "robots", "robotics", "autonomous", "embodied",
+    "gpu", "semiconductor", "accelerator", "quantum", "qubit", "qubits", "annealing",
+    "superconducting", "photonic", "cryptography", "battery", "batteries", "solid-state",
+    "lithium", "sodium", "anode", "cathode", "electrolyte", "perovskite", "solar",
+    "photovoltaic", "fusion", "plasma", "reactor", "tokamak", "renewable", "hydrogen",
+    "biotech", "genomics", "crispr", "mrna", "therapy", "clinical", "molecular",
+    "satellite", "satellites", "rocket", "space", "orbital", "propulsion", "manufacturing",
+    "materials", "sensor", "sensors", "lidar", "edge", "cloud", "fine-tuning",
+    "post-training", "protein-ligand",
+}
+
+TECH_PHRASES = {
+    "large language model", "large language models", "foundation model", "foundation models",
+    "generative ai", "agentic ai", "retrieval augmented generation", "reinforcement learning",
+    "computer vision", "autonomous driving", "humanoid robot", "edge ai", "ai accelerator",
+    "quantum computing", "quantum computer", "quantum error correction", "fault tolerant quantum",
+    "quantum cryptography", "quantum communication", "quantum error correction",
+    "solid state battery", "solid-state battery",
+    "lithium metal battery", "sodium ion battery", "perovskite solar", "nuclear fusion",
+    "carbon capture", "green hydrogen", "protein folding", "ai drug discovery", "drug discovery",
+    "gene therapy", "cell therapy", "mrna vaccine", "crispr cas9", "synthetic biology",
+    "low earth orbit", "satellite communication", "reusable rocket", "robot foundation model",
 }
 
 REGION_KEYWORDS = {
@@ -73,6 +120,26 @@ def _tokenize(text: str) -> list[str]:
     return out
 
 
+def _candidate_keywords(text: str) -> list[str]:
+    tokens = _tokenize(text)
+    candidates: list[str] = []
+
+    # Prefer explicit technical multi-word phrases; they are more useful than isolated generic words.
+    for n in (3, 2):
+        for i in range(0, max(0, len(tokens) - n + 1)):
+            phrase = " ".join(tokens[i : i + n])
+            if phrase in TECH_PHRASES or any(t in TECH_TERMS for t in tokens[i : i + n]):
+                # Avoid phrase like "better model performance" where no real technical anchor exists.
+                if sum(1 for t in tokens[i : i + n] if t in TECH_TERMS) >= 1:
+                    candidates.append(phrase)
+
+    for t in tokens:
+        if t in TECH_SINGLE_TERMS:
+            candidates.append(t)
+
+    return candidates
+
+
 def detect_emerging_keywords(months_back: int = 6, baseline_months: int = 30, top_n: int = 40) -> pd.DataFrame:
     """Detect keywords that became frequent recently compared with historical baseline."""
     work = _base_papers()
@@ -89,15 +156,20 @@ def detect_emerging_keywords(months_back: int = 6, baseline_months: int = 30, to
 
     recent_counter: Counter[str] = Counter()
     for row in recent.itertuples(index=False):
-        recent_counter.update(_tokenize(f"{getattr(row, 'title', '')} {getattr(row, 'summary', '')}"))
+        recent_counter.update(_candidate_keywords(f"{getattr(row, 'title', '')} {getattr(row, 'summary', '')}"))
 
     base_counter: Counter[str] = Counter()
     for row in base.itertuples(index=False):
-        base_counter.update(_tokenize(f"{getattr(row, 'title', '')} {getattr(row, 'summary', '')}"))
+        base_counter.update(_candidate_keywords(f"{getattr(row, 'title', '')} {getattr(row, 'summary', '')}"))
 
     rows = []
     for kw, r_cnt in recent_counter.items():
         if r_cnt < 3:
+            continue
+        parts = kw.split()
+        if len(parts) == 1 and kw not in TECH_SINGLE_TERMS:
+            continue
+        if len(parts) >= 2 and not any(p in TECH_TERMS for p in parts):
             continue
         b_cnt = int(base_counter.get(kw, 0))
         # Score new/surging words higher while penalizing already-common terms.
