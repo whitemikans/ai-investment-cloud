@@ -198,11 +198,15 @@ def _init_news_tables_sqlalchemy() -> None:
                     stock_code TEXT PRIMARY KEY,
                     company_name TEXT NOT NULL,
                     sector TEXT,
-                    market TEXT
+                    market TEXT,
+                    listed_date DATE,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
         )
+        con.execute(text("ALTER TABLE stocks ADD COLUMN IF NOT EXISTS listed_date DATE"))
+        con.execute(text("ALTER TABLE stocks ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP"))
         con.execute(
             text(
                 """
@@ -279,8 +283,8 @@ def _init_news_tables_sqlalchemy() -> None:
             con.execute(
                 text(
                     """
-                    INSERT INTO stocks(stock_code, company_name, sector, market)
-                    VALUES (:code, :name, :sector, :market)
+                    INSERT INTO stocks(stock_code, company_name, sector, market, created_at)
+                    VALUES (:code, :name, :sector, :market, CURRENT_TIMESTAMP)
                     ON CONFLICT (stock_code) DO NOTHING
                     """
                 ),
