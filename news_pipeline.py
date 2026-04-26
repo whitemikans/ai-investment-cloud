@@ -188,35 +188,18 @@ def _find_existing_article_sa(conn, url: str):
 
 def _upsert_article_sa(conn, article: dict[str, str]) -> int:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    row = conn.execute(text("SELECT id FROM news_articles WHERE url = :url"), {"url": article["url"]}).mappings().first()
-    if row:
-        article_id = int(row["id"])
-        conn.execute(
-            text(
-                """
-                UPDATE news_articles
-                SET title = :title, source = :source, published_at = :published_at,
-                    summary_ja = :summary_ja, content = :content, updated_at = :updated_at
-                WHERE id = :id
-                """
-            ),
-            {
-                "title": article["title"],
-                "source": article["source"],
-                "published_at": article["published_at"],
-                "summary_ja": article["summary_ja"],
-                "content": article["content"],
-                "updated_at": now,
-                "id": article_id,
-            },
-        )
-        return article_id
-
-    new_id = conn.execute(
+    article_id = conn.execute(
         text(
             """
             INSERT INTO news_articles(title, url, source, published_at, summary_ja, content, created_at, updated_at)
             VALUES (:title, :url, :source, :published_at, :summary_ja, :content, :created_at, :updated_at)
+            ON CONFLICT (url) DO UPDATE SET
+                title = EXCLUDED.title,
+                source = EXCLUDED.source,
+                published_at = EXCLUDED.published_at,
+                summary_ja = EXCLUDED.summary_ja,
+                content = EXCLUDED.content,
+                updated_at = EXCLUDED.updated_at
             RETURNING id
             """
         ),
@@ -231,7 +214,7 @@ def _upsert_article_sa(conn, article: dict[str, str]) -> int:
             "updated_at": now,
         },
     ).scalar_one()
-    return int(new_id)
+    return int(article_id)
 
 
 def _upsert_sentiment_sa(
