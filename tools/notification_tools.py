@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -32,11 +32,15 @@ def _split_message(text: str, max_len: int = 1800) -> list[str]:
 
 
 @tool("Discord通知")
-def send_discord_message(message: str, severity: str = "normal") -> str:
-    """Discord Webhookへメッセージを送信します。"""
-    webhook = (os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
+def send_discord_message(message: str, severity: str = "normal", webhook_url: str | None = None) -> str:
+    """Send a Markdown message to Discord via webhook.
+
+    `webhook_url` allows weekly technology reports to use a dedicated Discord channel
+    while keeping the existing daily report webhook unchanged.
+    """
+    webhook = (webhook_url or os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
     if not webhook:
-        return "DISCORD_WEBHOOK_URL が未設定です。"
+        return "DISCORD_WEBHOOK_URL is not set."
 
     color_map = {
         "normal": 0x22C55E,
@@ -60,9 +64,8 @@ def send_discord_message(message: str, severity: str = "normal") -> str:
         try:
             resp = requests.post(webhook, json=payload, timeout=10)
             if resp.status_code >= 300:
-                return f"Discord送信失敗: {resp.status_code} {resp.text[:120]}"
+                return f"Discord send failed: {resp.status_code} {resp.text[:120]}"
             sent += 1
         except Exception as exc:
-            return f"Discord送信エラー: {exc}"
+            return f"Discord send error: {exc}"
     return json.dumps({"ok": True, "sent_chunks": sent}, ensure_ascii=False)
-

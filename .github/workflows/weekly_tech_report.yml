@@ -24,6 +24,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DISCORD_TECH_WEBHOOK_URL: ${{ secrets.DISCORD_TECH_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
       - name: Upload logs
@@ -34,4 +35,3 @@ jobs:
           path: dashboard_events.log
           if-no-files-found: ignore
           retention-days: 30
-
