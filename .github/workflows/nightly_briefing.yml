@@ -21,7 +21,13 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python scripts/generate_daily_briefing.py
       - name: Notify failure
-        if: failure() && secrets.DISCORD_WEBHOOK_URL != ''
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          curl -H "Content-Type: application/json" -d "{\"content\":\"🚨 nightly_briefing.yml failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" "${{ secrets.DISCORD_WEBHOOK_URL }}"
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL is not set. Skip notify."
+            exit 0
+          fi
+          curl -H "Content-Type: application/json" -d "{\"content\":\"🚨 nightly_briefing.yml failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" "$DISCORD_WEBHOOK_URL"
 
