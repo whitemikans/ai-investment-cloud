@@ -23,10 +23,10 @@ jobs:
 
       - name: Run rebalance checker
         env:
+          PYTHONPATH: ${{ github.workspace }}
           CLOUD_DATABASE_URL: ${{ secrets.CLOUD_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           REBALANCE_THRESHOLD: "0.05"
         run: |
           python scripts/rebalance_checker.py
-

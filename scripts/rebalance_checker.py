@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime
 import os
+import sys
+from pathlib import Path
 
 import pandas as pd
 import requests
 import yfinance as yf
 from sqlalchemy import create_engine, text
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from config import get_database_url
 
@@ -131,4 +137,3 @@ if __name__ == "__main__":
         threshold = 0.05
     _, output = check_rebalance(threshold=threshold)
     print(output)
-
