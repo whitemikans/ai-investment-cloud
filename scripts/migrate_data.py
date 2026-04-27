@@ -1,15 +1,19 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from config import get_database_url
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SQLITE_PATH = PROJECT_ROOT / "investment.db"
 TABLES = [
     "stocks",
@@ -38,32 +42,22 @@ def main() -> None:
     src = sqlite3.connect(SQLITE_PATH)
     dst = create_engine(target_url, future=True)
 
-    migrated = 0
     for table in TABLES:
         try:
             df = pd.read_sql_query(f"SELECT * FROM {table}", src)
-        except Exception:
-            print(f"skip: {table} (read failed)")
-            continue
-        if df.empty:
-            print(f"skip: {table} (empty)")
-            continue
-
-        # For id-based tables, delete existing rows and append.
-        try:
+            if df.empty:
+                print(f"skip {table}: empty")
+                continue
             with dst.begin() as con:
                 con.execute(text(f"DELETE FROM {table}"))
-        except Exception:
-            pass
-
-        df.to_sql(table, dst, if_exists="append", index=False, method="multi")
-        migrated += len(df)
-        print(f"migrated: {table} rows={len(df)}")
+            df.to_sql(table, dst, if_exists="append", index=False)
+            print(f"migrated {table}: {len(df)} rows")
+        except Exception as exc:
+            print(f"skip {table}: {exc}")
 
     src.close()
-    print(f"done migrated_rows={migrated}")
+    print("migration_done")
 
 
 if __name__ == "__main__":
     main()
-

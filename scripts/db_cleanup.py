@@ -1,8 +1,14 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import get_database_url
 
@@ -31,4 +37,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
