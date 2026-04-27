@@ -345,18 +345,18 @@ def process_news_pipeline(max_articles_per_source: int = 20) -> pd.DataFrame:
     with _connect() as conn:
         for item in raw_articles:
             existing = _find_existing_article(conn, item["url"])
-            text = f"{item['title']} {item['content']}".strip()
-            searchable_text = text.lower()
+            article_text = f"{item['title']} {item['content']}".strip()
+            searchable_text = article_text.lower()
             if existing and str(existing["content"] or "").strip() == str(item["content"] or "").strip() and str(existing["summary_ja"] or "").strip():
                 title_ja = str(existing["title"] or "").strip() or translate_to_japanese(item["title"])
                 summary = str(existing["summary_ja"] or "").strip()
             else:
                 title_ja = translate_to_japanese(item["title"])
                 summary = build_japanese_summary(title_ja, item["content"])
-            sentiment_score, sentiment_label = analyze_sentiment(text)
-            importance = score_importance(text, item["source"])
-            related_stocks = extract_related_stocks(text, stock_codes)
-            sector = infer_sector(text)
+            sentiment_score, sentiment_label = analyze_sentiment(article_text)
+            importance = score_importance(article_text, item["source"])
+            related_stocks = extract_related_stocks(article_text, stock_codes)
+            sector = infer_sector(article_text)
 
             hit_keywords = _find_hit_keywords(active_keywords, searchable_text)
             if hit_keywords:
