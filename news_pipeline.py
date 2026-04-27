@@ -281,55 +281,76 @@ def process_news_pipeline(max_articles_per_source: int = 20) -> pd.DataFrame:
     processed = 0
     inserted_or_updated = 0
     alerts_count = 0
+    failed = 0
+    errors: list[str] = []
 
     if not _is_sqlite():
         with engine.begin() as conn:
             for item in raw_articles:
-                existing = _find_existing_article_sa(conn, item["url"])
-                text_src = f"{item['title']} {item['content']}".strip()
-                searchable_text = text_src.lower()
-                if existing and str(existing["content"] or "").strip() == str(item["content"] or "").strip() and str(existing["summary_ja"] or "").strip():
-                    title_ja = str(existing["title"] or "").strip() or translate_to_japanese(item["title"])
-                    summary = str(existing["summary_ja"] or "").strip()
-                else:
-                    title_ja = translate_to_japanese(item["title"])
-                    summary = build_japanese_summary(title_ja, item["content"])
-                sentiment_score, sentiment_label = analyze_sentiment(text_src)
-                importance = score_importance(text_src, item["source"])
-                related_stocks = extract_related_stocks(text_src, stock_codes)
-                sector = infer_sector(text_src)
+                try:
+                    existing = _find_existing_article_sa(conn, item["url"])
+                    text_src = f"{item['title']} {item['content']}".strip()
+                    searchable_text = text_src.lower()
+                    if existing and str(existing["content"] or "").strip() == str(item["content"] or "").strip() and str(existing["summary_ja"] or "").strip():
+                        title_ja = str(existing["title"] or "").strip() or translate_to_japanese(item["title"])
+                        summary = str(existing["summary_ja"] or "").strip()
+                    else:
+                        title_ja = translate_to_japanese(item["title"])
+                        summary = build_japanese_summary(title_ja, item["content"])
+                    sentiment_score, sentiment_label = analyze_sentiment(text_src)
+                    importance = score_importance(text_src, item["source"])
+                    related_stocks = extract_related_stocks(text_src, stock_codes)
+                    sector = infer_sector(text_src)
 
-                hit_keywords = _find_hit_keywords(active_keywords, searchable_text)
-                if hit_keywords:
-                    importance = min(5, importance + 1)
+                    hit_keywords = _find_hit_keywords(active_keywords, searchable_text)
+                    if hit_keywords:
+                        importance = min(5, importance + 1)
 
-                article_id = _upsert_article_sa(
-                    conn,
+                    article_id = _upsert_article_sa(
+                        conn,
+                        {
+                            "title": title_ja,
+                            "url": item["url"],
+                            "source": item["source"],
+                            "published_at": item["published_at"],
+                            "summary_ja": summary,
+                            "content": item["content"],
+                        },
+                    )
+                    _upsert_sentiment_sa(
+                        conn,
+                        article_id=article_id,
+                        sentiment_score=sentiment_score,
+                        sentiment_label=sentiment_label,
+                        importance_score=importance,
+                        related_stocks=related_stocks,
+                        sector=sector,
+                    )
+                    before = int(conn.execute(text("SELECT COUNT(*) FROM alerts")).scalar_one())
+                    _insert_alert_sa(conn, article_id=article_id, hit_keywords=hit_keywords, importance_score=importance)
+                    after = int(conn.execute(text("SELECT COUNT(*) FROM alerts")).scalar_one())
+                    if after > before:
+                        alerts_count += 1
+                    processed += 1
+                    inserted_or_updated += 1
+                except Exception as exc:
+                    failed += 1
+                    if len(errors) < 3:
+                        errors.append(f"{item.get('source', '?')}: {exc}")
+                    continue
+        if inserted_or_updated == 0:
+            detail = " | ".join(errors) if errors else "No details"
+            return pd.DataFrame(
+                [
                     {
-                        "title": title_ja,
-                        "url": item["url"],
-                        "source": item["source"],
-                        "published_at": item["published_at"],
-                        "summary_ja": summary,
-                        "content": item["content"],
-                    },
-                )
-                _upsert_sentiment_sa(
-                    conn,
-                    article_id=article_id,
-                    sentiment_score=sentiment_score,
-                    sentiment_label=sentiment_label,
-                    importance_score=importance,
-                    related_stocks=related_stocks,
-                    sector=sector,
-                )
-                before = int(conn.execute(text("SELECT COUNT(*) FROM alerts")).scalar_one())
-                _insert_alert_sa(conn, article_id=article_id, hit_keywords=hit_keywords, importance_score=importance)
-                after = int(conn.execute(text("SELECT COUNT(*) FROM alerts")).scalar_one())
-                if after > before:
-                    alerts_count += 1
-                processed += 1
-                inserted_or_updated += 1
+                        "success": False,
+                        "message": f"News pipeline failed for all articles. {detail}",
+                        "processed": processed,
+                        "upserted": inserted_or_updated,
+                        "alerts": alerts_count,
+                    }
+                ]
+            )
         return pd.DataFrame(
             [
                 {
