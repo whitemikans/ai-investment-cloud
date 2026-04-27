@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -59,13 +59,13 @@ def _test_db_connection() -> bool:
 def _test_api_connection() -> bool:
     key = resolve_gemini_api_key()
     if not key:
-        raise RuntimeError("GEMINI_API_KEY が未設定です。")
+        raise RuntimeError("GEMINI_API_KEY 縺梧悴險ｭ螳壹〒縺吶・)
     model = resolve_model_name()
     client = genai.Client(api_key=key)
     resp = client.models.generate_content(model=model, contents="ping")
     text_resp = str(getattr(resp, "text", "") or "").strip()
     if not text_resp:
-        raise RuntimeError("Gemini API応答が空です。")
+        raise RuntimeError("Gemini API蠢懃ｭ斐′遨ｺ縺ｧ縺吶・)
     return True
 
 
@@ -83,10 +83,11 @@ def _run_with_retry(
                 return fut.result(timeout=timeout_sec)
         except FuturesTimeoutError as exc:
             last_err = TimeoutError(f"{stage_name} timed out after {timeout_sec}s")
-            print(f"⚠️ {stage_name} タイムアウト ({attempt}/{retries})")
+            print(f"笞・・{stage_name} 繧ｿ繧､繝繧｢繧ｦ繝・({attempt}/{retries})")
         except Exception as exc:
             last_err = exc
-            print(f"⚠️ {stage_name} 失敗 ({attempt}/{retries}): {exc}")
+            print(f"笞・・{stage_name} 螟ｱ謨・({attempt}/{retries}): {exc}")
+            print(traceback.format_exc(limit=5))
         if attempt < retries:
             time.sleep(2)
     raise RuntimeError(f"{stage_name} failed after {retries} retries: {last_err}")
@@ -103,46 +104,46 @@ def _build_report(research: dict, analysis: dict, risk: dict) -> dict:
         risk_level = "normal"
 
     recs = analysis.get("recommendations", [])
-    actions = [f"{r.get('ticker','-')}: {r.get('action','保持')} ({r.get('stars',3)}★)" for r in recs[:3]]
+    actions = [f"{r.get('ticker','-')}: {r.get('action','菫晄戟')} ({r.get('stars',3)}笘・" for r in recs[:3]]
 
     market = _get_market_snapshot()
-    sentiment = "やや強気" if risk_level == "normal" else ("中立" if risk_level == "warning" else "警戒")
-    summary_line1 = f"ニュース処理件数 {int(research.get('processed', 0))}件、注目銘柄 {len(recs)}件。"
-    summary_line2 = f"リスクスコア {risk_score}（{risk_level}）。"
-    summary_line3 = "本日の重要ポイントは上位3点に要約しました。"
+    sentiment = "繧・ｄ蠑ｷ豌・ if risk_level == "normal" else ("荳ｭ遶・ if risk_level == "warning" else "隴ｦ謌・)
+    summary_line1 = f"繝九Η繝ｼ繧ｹ蜃ｦ逅・ｻｶ謨ｰ {int(research.get('processed', 0))}莉ｶ縲∵ｳｨ逶ｮ驫俶氛 {len(recs)}莉ｶ縲・
+    summary_line2 = f"繝ｪ繧ｹ繧ｯ繧ｹ繧ｳ繧｢ {risk_score}・・risk_level}・峨・
+    summary_line3 = "譛ｬ譌･縺ｮ驥崎ｦ√・繧､繝ｳ繝医・荳贋ｽ・轤ｹ縺ｫ隕∫ｴ・＠縺ｾ縺励◆縲・
     summary = "\n".join([summary_line1, summary_line2, summary_line3])
     market_overview = (
         f"S&P500: {market.get('sp500_text', 'N/A')} / "
-        f"為替(ドル円): {market.get('usdjpy_text', 'N/A')} / "
+        f"轤ｺ譖ｿ(繝峨Ν蜀・: {market.get('usdjpy_text', 'N/A')} / "
         f"VIX: {market.get('vix_text', 'N/A')} / "
-        f"センチメント: {sentiment}"
+        f"繧ｻ繝ｳ繝√Γ繝ｳ繝・ {sentiment}"
     )
     risk_alerts = " / ".join(risk_warnings) if isinstance(risk_warnings, list) else str(risk_warnings or "")
-    notable_lines = [f"- {r.get('ticker','-')}: 推奨度 {r.get('stars',3)} / {r.get('action','保持')}" for r in recs[:3]]
+    notable_lines = [f"- {r.get('ticker','-')}: 謗ｨ螂ｨ蠎ｦ {r.get('stars',3)} / {r.get('action','菫晄戟')}" for r in recs[:3]]
 
     lines = [
-        "📝 AI投資チーム デイリーレポート",
-        f"日時: {_now_jst().strftime('%Y-%m-%d %H:%M:%S JST')}",
+        "統 AI謚戊ｳ・メ繝ｼ繝 繝・う繝ｪ繝ｼ繝ｬ繝昴・繝・,
+        f"譌･譎・ {_now_jst().strftime('%Y-%m-%d %H:%M:%S JST')}",
         "",
-        "📋 エグゼクティブサマリー（3行）",
+        "搭 繧ｨ繧ｰ繧ｼ繧ｯ繝・ぅ繝悶し繝槭Μ繝ｼ・・陦鯉ｼ・,
         summary_line1,
         summary_line2,
         summary_line3,
-        f"📰 市場概況: {market_overview}",
-        "📊 注目銘柄評価:",
+        f"堂 蟶ょｴ讎よｳ・ {market_overview}",
+        "投 豕ｨ逶ｮ驫俶氛隧穂ｾ｡:",
     ]
-    lines.extend(notable_lines or ["- 該当なし"])
-    lines.extend([f"🛡️ リスク: {risk_alerts or '重大警告なし'}", "📊 推奨アクション:"])
+    lines.extend(notable_lines or ["- 隧ｲ蠖薙↑縺・])
+    lines.extend([f"孱・・繝ｪ繧ｹ繧ｯ: {risk_alerts or '驥榊､ｧ隴ｦ蜻翫↑縺・}", "投 謗ｨ螂ｨ繧｢繧ｯ繧ｷ繝ｧ繝ｳ:"])
     lines.extend([f"- {a}" for a in actions])
     acc = summarize_recent_accuracy(days=90)
     acc_rate = acc.get("buy_win_rate_1m")
     acc_samples = int(acc.get("samples", 0) or 0)
     if acc_rate is None:
-        lines.append(f"- 過去3ヶ月 買い推奨1ヶ月勝率: N/A (samples={acc_samples})")
+        lines.append(f"- 驕主悉3繝ｶ譛・雋ｷ縺・耳螂ｨ1繝ｶ譛亥享邇・ N/A (samples={acc_samples})")
     else:
-        lines.append(f"- 過去3ヶ月 買い推奨1ヶ月勝率: {float(acc_rate):.1f}% (samples={acc_samples})")
-    lines.append("- 自分たちの過去推奨精度を継続監視し、次回提案へ反映します。")
-    lines.append("⚠️ 免責事項: 本情報は一般情報であり、投資判断はご自身の責任でお願いします。")
+        lines.append(f"- 驕主悉3繝ｶ譛・雋ｷ縺・耳螂ｨ1繝ｶ譛亥享邇・ {float(acc_rate):.1f}% (samples={acc_samples})")
+    lines.append("- 閾ｪ蛻・◆縺｡縺ｮ驕主悉謗ｨ螂ｨ邊ｾ蠎ｦ繧堤ｶ咏ｶ夂屮隕悶＠縲∵ｬ｡蝗樊署譯医∈蜿肴丐縺励∪縺吶・)
+    lines.append("笞・・蜈崎ｲｬ莠矩・ 譛ｬ諠・ｱ縺ｯ荳闊ｬ諠・ｱ縺ｧ縺ゅｊ縲∵兜雉・愛譁ｭ縺ｯ縺碑・霄ｫ縺ｮ雋ｬ莉ｻ縺ｧ縺企｡倥＞縺励∪縺吶・)
     full = "\n".join(lines)
 
     return {
@@ -208,10 +209,17 @@ def _auto_save_research_results(limit: int = 50) -> None:
 
 
 def _research_stage() -> dict:
-    r = process_news_pipeline(max_articles_per_source=10)
-    _auto_save_research_results(limit=50)
-    return r.iloc[0].to_dict() if not r.empty else {"processed": 0}
+    try:
+        r = process_news_pipeline(max_articles_per_source=10)
+    except Exception as exc:
+        raise RuntimeError(f"process_news_pipeline failed: {exc}\\n{traceback.format_exc(limit=5)}") from exc
 
+    try:
+        _auto_save_research_results(limit=50)
+    except Exception as exc:
+        print(f"auto-save skipped: {exc}")
+        print(traceback.format_exc(limit=5))
+    return r.iloc[0].to_dict() if not r.empty else {"processed": 0}
 
 def _analysis_stage() -> dict:
     pf = get_portfolio_df_with_price()
@@ -221,7 +229,7 @@ def _analysis_stage() -> dict:
         tech = json.loads(technical_analysis(t))
         fund = json.loads(fundamental_analysis(t))
         stars = int(round((float(tech.get("technical_score", 3)) + float(fund.get("valuation_score", 3)) + float(fund.get("growth_score", 3))) / 3))
-        action = "買い" if stars >= 4 else ("売り" if stars <= 2 else "保持")
+        action = "雋ｷ縺・ if stars >= 4 else ("螢ｲ繧・ if stars <= 2 else "菫晄戟")
         recs.append({"ticker": t, "stars": stars, "action": action, "technical": tech, "fundamental": fund})
     return {"recommendations": recs}
 
@@ -270,25 +278,25 @@ def _kickoff_crewai_best_effort() -> None:
 
 
 def run_investment_crew() -> dict:
-    print("━" * 50)
-    print("🚀 AI投資チーム — デイリー分析開始")
-    print(f"   {_now_jst().strftime('%Y年%m月%d日 %H:%M JST')}")
-    print("━" * 50)
+    print("笏・ * 50)
+    print("噫 AI謚戊ｳ・メ繝ｼ繝 窶・繝・う繝ｪ繝ｼ蛻・梵髢句ｧ・)
+    print(f"   {_now_jst().strftime('%Y蟷ｴ%m譛・d譌･ %H:%M JST')}")
+    print("笏・ * 50)
 
     try:
         # Ensure core DB schema (including stocks table) exists before any stage.
         init_db()
         env_status = _required_env_status()
         print(f"ENV CHECK: {env_status}")
-        db_ok = bool(_run_with_retry(_test_db_connection, "DB接続テスト", retries=3, timeout_sec=60))
-        api_ok = bool(_run_with_retry(_test_api_connection, "API接続テスト", retries=3, timeout_sec=60))
+        db_ok = bool(_run_with_retry(_test_db_connection, "DB謗･邯壹ユ繧ｹ繝・, retries=3, timeout_sec=60))
+        api_ok = bool(_run_with_retry(_test_api_connection, "API謗･邯壹ユ繧ｹ繝・, retries=3, timeout_sec=60))
         print(f"PRECHECK: db_ok={db_ok}, api_ok={api_ok}")
 
         if all(env_status.values()) and db_ok and api_ok:
             try:
                 _kickoff_crewai_best_effort()
             except Exception as exc:
-                send_discord_message(f"🔴 Crew kickoff failed: {exc}", severity="urgent")
+                send_discord_message(f"閥 Crew kickoff failed: {exc}", severity="urgent")
 
         start = time.time()
         research = _run_with_retry(_research_stage, "Researcher", retries=3, timeout_sec=300)
@@ -297,13 +305,13 @@ def run_investment_crew() -> dict:
         result = _run_with_retry(lambda: _report_stage(research, analysis, risk), "Reporter", retries=3, timeout_sec=300)
         elapsed = int(time.time() - start)
 
-        print("━" * 50)
-        print("✅ AI投資チーム — デイリー分析完了")
-        print(f"   合計所要時間: {elapsed // 60}分{elapsed % 60}秒")
-        print("━" * 50)
+        print("笏・ * 50)
+        print("笨・AI謚戊ｳ・メ繝ｼ繝 窶・繝・う繝ｪ繝ｼ蛻・梵螳御ｺ・)
+        print(f"   蜷郁ｨ域園隕∵凾髢・ {elapsed // 60}蛻・elapsed % 60}遘・)
+        print("笏・ * 50)
         return result
     except Exception as exc:
-        err = f"致命的エラー: {exc}\n{traceback.format_exc(limit=2)}"
+        err = f"閾ｴ蜻ｽ逧・お繝ｩ繝ｼ: {exc}\n{traceback.format_exc(limit=2)}"
         send_discord_message(err[:1800], severity="urgent")
         raise
 
