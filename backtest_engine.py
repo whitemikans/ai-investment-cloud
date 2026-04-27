@@ -51,7 +51,7 @@ def ensure_backtest_tables() -> None:
                 sharpe_ratio REAL,
                 profit_factor REAL,
                 trades INTEGER,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
                 .replace("__ID_COL__", id_col)
